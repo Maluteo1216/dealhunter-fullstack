@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: price-tracker-api
+    runtime: go
+    plan: free
+    region: oregon
+    buildCommand: go mod tidy && go build -o bin/api ./cmd/api
+    startCommand: ./bin/api
+    envVars:
+      - key: PORT
+        value: 8080
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: GOOGLE_CLIENT_ID
+        sync: false
