@@ -38,7 +38,7 @@ func main() {
 
 	var dbPool = db.Pool
 	authHandler := handlers.NewAuthHandler(dbPool, cfg.JWTSecret, cfg.GoogleClientID)
-	gameHandler := handlers.NewGameHandler(dbPool)
+	gameHandler := handlers.NewGameHandler(dbPool, syncService)
 	storeHandler := handlers.NewStoreHandler(dbPool)
 	wishlistHandler := handlers.NewWishlistHandler(dbPool)
 	alertHandler := handlers.NewAlertHandler(dbPool)
@@ -87,6 +87,7 @@ func main() {
 		// Sincronización pública / administrativa
 		api.Post("/sync/ingest", syncHandler.IngestDeals)
 		api.Post("/sync/server", syncHandler.ServerSync)
+		api.Post("/sync/enrich", syncHandler.EnrichCatalog)
 		api.Get("/sync/logs", syncHandler.GetSyncLogs)
 
 		// Rutas protegidas por JWT

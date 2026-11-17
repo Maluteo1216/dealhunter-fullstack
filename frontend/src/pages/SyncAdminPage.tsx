@@ -12,13 +12,19 @@ import {
   Globe,
   Database,
   Loader2,
+  Zap,
+  ShoppingBag,
 } from 'lucide-react';
 
 export const SyncAdminPage: React.FC = () => {
   const [logs, setLogs] = useState<SyncLog[]>([]);
   const [loadingLogs, setLoadingLogs] = useState<boolean>(true);
   const [syncingBrowser, setSyncingBrowser] = useState<boolean>(false);
+  const [syncingMultiStore, setSyncingMultiStore] = useState<boolean>(false);
   const [syncingServer, setSyncingServer] = useState<boolean>(false);
+  const [enriching, setEnriching] = useState<boolean>(false);
+  const [syncProgressText, setSyncProgressText] = useState<string>('');
+
   const [syncStatus, setSyncStatus] = useState<{
     type: 'success' | 'error' | null;
     message: string;
@@ -40,26 +46,29 @@ export const SyncAdminPage: React.FC = () => {
     loadLogs();
   }, []);
 
-  // Sincronización Híbrida desde el Navegador (Evade Bloqueo Cloudflare de Render)
+  // Helper para obtener tiendas de CheapShark
+  const fetchCheapSharkStores = async (): Promise<CheapSharkStore[]> => {
+    try {
+      const res = await fetch('https://www.cheapshark.com/api/1.0/stores');
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn('No se pudieron obtener tiendas externas:', e);
+    }
+    return [];
+  };
+
+  // 1. Sincronización Rápida (1 o 2 páginas de ofertas generales)
   const handleBrowserSync = async (pagesToFetch: number = 2) => {
     setSyncingBrowser(true);
     setSyncStatus({ type: null, message: '' });
+    setSyncProgressText('Obteniendo ofertas generales...');
 
     try {
-      // 1. Obtener lista oficial de tiendas de CheapShark
-      let stores: CheapSharkStore[] = [];
-      try {
-        const storesResp = await fetch('https://www.cheapshark.com/api/1.0/stores');
-        if (storesResp.ok) {
-          stores = await storesResp.json();
-        }
-      } catch (e) {
-        console.warn('No se pudo obtener tiendas externas, se usarán las del sistema:', e);
-      }
-
-      // 2. Obtener ofertas reales paginadas de CheapShark desde el navegador del cliente
+      const stores = await fetchCheapSharkStores();
       const allDeals: CheapSharkDeal[] = [];
+
       for (let page = 0; page < pagesToFetch; page++) {
+        setSyncProgressText(`Descargando página ${page + 1} de ofertas...`);
         const dealsResp = await fetch(
           `https://www.cheapshark.com/api/1.0/deals?onSale=1&pageSize=60&pageNumber=${page}`
         );
@@ -73,15 +82,12 @@ export const SyncAdminPage: React.FC = () => {
         throw new Error('CheapShark no retornó ofertas.');
       }
 
-      // 3. Enviar al backend en Go para ejecución transaccional
-      const result = await api.ingestDeals({
-        deals: allDeals,
-        stores,
-      });
+      setSyncProgressText(`Enviando ${allDeals.length} ofertas a PostgreSQL...`);
+      const result = await api.ingestDeals({ deals: allDeals, stores });
 
       setSyncStatus({
         type: 'success',
-        message: `¡Sincronización exitosa! Se procesaron ${result.processed} ofertas y se actualizaron tiendas e históricos en PostgreSQL.`,
+        message: `¡Sincronización completada! Se procesaron ${result.processed} ofertas en la base de datos.`,
       });
       loadLogs();
     } catch (err: any) {
@@ -91,10 +97,105 @@ export const SyncAdminPage: React.FC = () => {
       });
     } finally {
       setSyncingBrowser(false);
+      setSyncProgressText('');
     }
   };
 
-  // Sincronización directa desde el servidor Go
+  // 2. Sincronización Masiva Multi-Tienda (Steam, Epic, Fanatical, GOG, GMG, Humble)
+  const handleMultiStoreSync = async () => {
+    setSyncingMultiStore(true);
+    setSyncStatus({ type: null, message: '' });
+    setSyncProgressText('Iniciando sincronización multi-tienda...');
+
+    try {
+      const stores = await fetchCheapSharkStores();
+
+      const storeEndpoints = [
+        { name: 'Ofertas Generales', url: 'https://www.cheapshark.com/api/1.0/deals?onSale=1&pageSize=60' },
+        { name: 'Steam', url: 'https://www.cheapshark.com/api/1.0/deals?storeID=1&pageSize=60' },
+        { name: 'Epic Games Store', url: 'https://www.cheapshark.com/api/1.0/deals?storeID=25&pageSize=60' },
+        { name: 'Fanatical', url: 'https://www.cheapshark.com/api/1.0/deals?storeID=15&pageSize=60' },
+        { name: 'GOG', url: 'https://www.cheapshark.com/api/1.0/deals?storeID=7&pageSize=60' },
+        { name: 'GreenManGaming', url: 'https://www.cheapshark.com/api/1.0/deals?storeID=3&pageSize=60' },
+        { name: 'Humble Store', url: 'https://www.cheapshark.com/api/1.0/deals?storeID=11&pageSize=60' },
+      ];
+
+      const allDeals: CheapSharkDeal[] = [];
+      const seenDeals = new Set<string>();
+
+      for (const st of storeEndpoints) {
+        setSyncProgressText(`Consultando catálogo de ${st.name}...`);
+        try {
+          const res = await fetch(st.url);
+          if (res.ok) {
+            const deals: CheapSharkDeal[] = await res.json();
+            for (const d of deals) {
+              if (!seenDeals.has(d.dealID)) {
+                seenDeals.add(d.dealID);
+                allDeals.push(d);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn(`Error al consultar ${st.name}:`, e);
+        }
+      }
+
+      if (allDeals.length === 0) {
+        throw new Error('No se pudieron obtener ofertas de las tiendas.');
+      }
+
+      setSyncProgressText(`Persistiendo ${allDeals.length} ofertas multi-tienda en la base de datos...`);
+      const result = await api.ingestDeals({ deals: allDeals, stores });
+
+      // Ejecutar auto-enriquecimiento de los juegos para expandir sus tiendas
+      setSyncProgressText('Enriqueciendo títulos principales con todas sus tiendas oficiales...');
+      let enrichMsg = '';
+      try {
+        const enrichRes = await api.enrichCatalog();
+        enrichMsg = ` Además se enriquecieron ${enrichRes.enriched_games} títulos con ${enrichRes.stores_added} precios de tiendas adicionales.`;
+      } catch (e) {
+        console.warn('Aviso durante enriquecimiento:', e);
+      }
+
+      setSyncStatus({
+        type: 'success',
+        message: `¡Sincronización multi-tienda completada! Se procesaron ${result.processed} ofertas a lo largo de 6 tiendas oficiales.${enrichMsg}`,
+      });
+      loadLogs();
+    } catch (err: any) {
+      setSyncStatus({
+        type: 'error',
+        message: err.message || 'Error durante la sincronización multi-tienda.',
+      });
+    } finally {
+      setSyncingMultiStore(false);
+      setSyncProgressText('');
+    }
+  };
+
+  // 3. Enriquecer catálogo existente con múltiples tiendas
+  const handleEnrichCatalog = async () => {
+    setEnriching(true);
+    setSyncStatus({ type: null, message: '' });
+    try {
+      const res = await api.enrichCatalog();
+      setSyncStatus({
+        type: 'success',
+        message: `¡Enriquecimiento exitoso! Se actualizaron ${res.enriched_games} videojuegos agregando ${res.stores_added} precios en múltiples tiendas (Steam, Epic, GOG, Fanatical, etc.).`,
+      });
+      loadLogs();
+    } catch (err: any) {
+      setSyncStatus({
+        type: 'error',
+        message: err.message || 'Error al enriquecer el catálogo existente.',
+      });
+    } finally {
+      setEnriching(false);
+    }
+  };
+
+  // 4. Sincronización directa desde el servidor Go
   const handleServerSync = async () => {
     setSyncingServer(true);
     setSyncStatus({ type: null, message: '' });
@@ -102,21 +203,21 @@ export const SyncAdminPage: React.FC = () => {
       const res = await api.serverSync();
       setSyncStatus({
         type: 'success',
-        message: `Servidor sincronizado: ${res.processed} ofertas procesadas directamente por Go.`,
+        message: `¡Servidor Go sincronizado exitosamente! Se procesaron ${res.processed} ofertas multi-tienda directamente desde el backend en Render.`,
       });
       loadLogs();
     } catch (err: any) {
       setSyncStatus({
         type: 'error',
-        message:
-          err.message ||
-          'El servidor en la nube fue bloqueado por Cloudflare (403). Usa la sincronización del navegador recomendada.',
+        message: err.message || 'Error en sincronización nativa desde el servidor.',
       });
       loadLogs();
     } finally {
       setSyncingServer(false);
     }
   };
+
+  const isBusy = syncingBrowser || syncingMultiStore || syncingServer || enriching;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
@@ -127,7 +228,7 @@ export const SyncAdminPage: React.FC = () => {
           Centro de Sincronización en Vivo
         </h1>
         <p className="text-sm text-slate-400 mt-1">
-          Alimenta y actualiza el catálogo con datos oficiales en tiempo real desde la API pública de CheapShark.
+          Alimenta y actualiza el catálogo con ofertas reales y precios multi-tienda desde la API oficial de CheapShark.
         </p>
       </div>
 
@@ -154,57 +255,103 @@ export const SyncAdminPage: React.FC = () => {
         </div>
       )}
 
+      {/* Indicador de Progreso en Vivo */}
+      {syncProgressText && (
+        <div className="bg-brand-950/30 border border-brand-500/40 text-brand-300 p-3 rounded-xl flex items-center gap-2 text-xs font-medium animate-pulse">
+          <Loader2 className="w-4 h-4 animate-spin text-brand-400 shrink-0" />
+          <span>{syncProgressText}</span>
+        </div>
+      )}
+
       {/* Tarjetas de Acción de Sincronización */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Opción 1: Sincronización desde Navegador (Recomendada / Anti-Cloudflare) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Opción 1: Sincronización Masiva Multi-Tienda (Recomendada) */}
         <div className="bg-slate-900 border border-brand-500/40 rounded-2xl p-6 relative overflow-hidden shadow-xl flex flex-col justify-between">
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-brand-500/20 text-brand-400 border border-brand-500/30">
                 <ShieldCheck className="w-3.5 h-3.5" /> Recomendado
               </span>
-              <Globe className="w-5 h-5 text-brand-400" />
+              <ShoppingBag className="w-5 h-5 text-brand-400" />
             </div>
 
             <h3 className="text-lg font-bold text-white">
-              Sincronización Híbrida (Vía Cliente)
+              Sincronización Multi-Tienda Masiva
             </h3>
             <p className="text-xs text-slate-300 leading-relaxed">
-              El navegador solicita las ofertas a CheapShark sin restricciones de red ni bloqueos de Cloudflare y las transmite a la API de Go para almacenarlas en PostgreSQL en transacciones ACID.
+              Consulta de forma paralela <strong>Steam, Epic Games, GOG, Fanatical, GreenManGaming y Humble Store</strong> (300+ ofertas) garantizando que los juegos muestren comparativas de precios entre múltiples tiendas.
             </p>
           </div>
 
-          <div className="mt-6 pt-4 border-t border-slate-800 flex flex-wrap gap-2">
+          <div className="mt-6 pt-4 border-t border-slate-800 space-y-2">
             <button
-              onClick={() => handleBrowserSync(1)}
-              disabled={syncingBrowser || syncingServer}
-              className="flex-1 py-2.5 px-4 bg-brand-600 hover:bg-brand-500 text-white rounded-xl font-bold text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-brand-600/20 disabled:opacity-50"
+              onClick={handleMultiStoreSync}
+              disabled={isBusy}
+              className="w-full py-2.5 px-4 bg-brand-600 hover:bg-brand-500 text-white rounded-xl font-bold text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-brand-600/20 disabled:opacity-50"
             >
-              {syncingBrowser ? (
+              {syncingMultiStore ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Sincronizando 60 ofertas...
+                  Sincronizando 6 Tiendas...
                 </>
               ) : (
                 <>
-                  <CloudDownload className="w-4 h-4" />
-                  Sincronizar 60 Ofertas
+                  <Zap className="w-4 h-4" />
+                  Sincronizar 6 Tiendas (300+ Ofertas)
                 </>
               )}
             </button>
 
             <button
-              onClick={() => handleBrowserSync(2)}
-              disabled={syncingBrowser || syncingServer}
-              className="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-bold text-xs transition disabled:opacity-50"
-              title="Obtiene 2 páginas de ofertas (120 juegos)"
+              onClick={() => handleBrowserSync(1)}
+              disabled={isBusy}
+              className="w-full py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium transition disabled:opacity-50"
             >
-              Descargar 120 Ofertas
+              Sincronización Rápida (60 Ofertas)
             </button>
           </div>
         </div>
 
-        {/* Opción 2: Sincronización Directa de Servidor */}
+        {/* Opción 2: Enriquecimiento de Catálogo Existente */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between shadow-xl">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-amber-400 uppercase tracking-wider flex items-center gap-1">
+                <Zap className="w-3.5 h-3.5" /> Multi-Store Lookup
+              </span>
+              <Globe className="w-5 h-5 text-slate-400" />
+            </div>
+
+            <h3 className="text-lg font-bold text-white">
+              Enriquecer Juegos Existentes
+            </h3>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Toma los videojuegos existentes en tu base de datos y consulta la API individual de CheapShark para cada uno, extrayendo y registrando sus precios en <strong>todas las demás tiendas oficiales disponibles</strong>.
+            </p>
+          </div>
+
+          <div className="mt-6 pt-4 border-t border-slate-800">
+            <button
+              onClick={handleEnrichCatalog}
+              disabled={isBusy}
+              className="w-full py-2.5 px-4 bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 border border-amber-500/40 rounded-xl font-bold text-xs transition flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {enriching ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Enriqueciendo Títulos...
+                </>
+              ) : (
+                <>
+                  <CloudDownload className="w-4 h-4" />
+                  Enriquecer Juegos Existentes
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Opción 3: Sincronización Directa de Servidor (Go) */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between shadow-xl">
           <div className="space-y-3">
             <div className="flex items-center justify-between">
@@ -218,20 +365,20 @@ export const SyncAdminPage: React.FC = () => {
               Sincronización Nativa en Servidor
             </h3>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Ejecuta una petición HTTP directa desde Go hacia CheapShark utilizando headers completos de navegador. En servidores cloud (como Render) puede enfrentar retos anti-bot de Cloudflare.
+              Ejecuta la sincronización multi-tienda directamente desde el servidor Go en Render, utilizando el encabezado descriptivo oficial requerido por CheapShark para evitar bloqueos HTTP 400.
             </p>
           </div>
 
           <div className="mt-6 pt-4 border-t border-slate-800">
             <button
               onClick={handleServerSync}
-              disabled={syncingBrowser || syncingServer}
+              disabled={isBusy}
               className="w-full py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-bold text-xs transition flex items-center justify-center gap-2 disabled:opacity-50"
             >
               {syncingServer ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Ejecutando en Go...
+                  Ejecutando en Servidor Go...
                 </>
               ) : (
                 <>
@@ -281,7 +428,7 @@ export const SyncAdminPage: React.FC = () => {
               ) : logs.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-8 text-center text-slate-500">
-                    Aún no se han ejecutado sincronizaciones. Haz clic en "Sincronizar Ofertas" arriba.
+                    Aún no se han ejecutado sincronizaciones. Haz clic en una de las opciones arriba.
                   </td>
                 </tr>
               ) : (

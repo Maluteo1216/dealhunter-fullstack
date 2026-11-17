@@ -105,6 +105,11 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onWishlistToggled }) =
               />
             )}
             <span className="font-medium truncate max-w-[100px]">{bestDeal.store_name}</span>
+            {game.stores_count && game.stores_count > 1 && (
+              <span className="text-[10px] text-brand-400 font-bold ml-1 bg-brand-950/60 px-1.5 py-0.5 rounded border border-brand-500/30">
+                +{game.stores_count - 1} tiendas
+              </span>
+            )}
           </div>
         )}
       </Link>
@@ -160,7 +165,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onWishlistToggled }) =
               to={`/game/${game.slug}`}
               className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-brand-600 hover:text-white text-xs font-medium text-slate-200 transition"
             >
-              Ver tiendas
+              {game.stores_count && game.stores_count > 1 ? `Ver ${game.stores_count} tiendas` : 'Ver tiendas'}
             </Link>
           </div>
         </div>

@@ -17,11 +17,15 @@ import (
 )
 
 type GameHandler struct {
-	db *sql.DB
+	db          *sql.DB
+	syncService *services.SyncService
 }
 
-func NewGameHandler(db *sql.DB) *GameHandler {
-	return &GameHandler{db: db}
+func NewGameHandler(db *sql.DB, syncService *services.SyncService) *GameHandler {
+	return &GameHandler{
+		db:          db,
+		syncService: syncService,
+	}
 }
 
 // GetGames obtiene la lista paginada de videojuegos con filtros y su mejor oferta actual
@@ -84,7 +88,8 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 			g.id, g.title, g.slug, COALESCE(g.description, ''), COALESCE(g.cover_image_url, ''),
 			COALESCE(g.steam_app_id, ''), g.historical_low_price, g.historical_low_date, g.created_at,
 			rd.store_id, rd.store_name, rd.store_slug, rd.store_logo, rd.regular_price, 
-			rd.current_price, rd.discount_percentage, rd.product_url, rd.external_deal_id
+			rd.current_price, rd.discount_percentage, rd.product_url, rd.external_deal_id,
+			COALESCE((SELECT COUNT(DISTINCT spc.store_id) FROM store_products spc WHERE spc.game_id = g.id), 0) AS stores_count
 		FROM games g
 		LEFT JOIN ranked_deals rd ON rd.game_id = g.id AND rd.rank = 1
 		WHERE 1=1
@@ -183,6 +188,7 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 			&g.SteamAppID, &histLow, &histDate, &g.CreatedAt,
 			&stID, &stName, &stSlug, &stLogo, &regPrice,
 			&curPrice, &discPerc, &prodURL, &extDealID,
+			&g.StoresCount,
 		)
 		if err != nil {
 			continue
@@ -317,6 +323,58 @@ func (h *GameHandler) GetGameBySlug(w http.ResponseWriter, r *http.Request) {
 				&p.IsOnSale, &p.ProductURL, &p.LastUpdated, &p.ExternalDealID,
 			); err == nil {
 				currentPrices = append(currentPrices, p)
+			}
+		}
+	}
+
+	// Si el juego solo tiene 1 tienda o ninguna, enriquecer en tiempo real con todas las tiendas de CheapShark
+	if len(currentPrices) <= 1 && h.syncService != nil {
+		var extGameID string
+		_ = h.db.QueryRowContext(r.Context(), `
+			SELECT COALESCE(external_game_id, '') FROM store_products 
+			WHERE game_id = $1 AND external_game_id IS NOT NULL AND external_game_id != '' 
+			LIMIT 1;
+		`, g.ID).Scan(&extGameID)
+
+		added, enrichErr := h.syncService.EnrichGameMultiStore(r.Context(), g.ID, extGameID, g.SteamAppID, g.Title)
+		if enrichErr == nil && added > 0 {
+			_ = h.db.QueryRowContext(r.Context(), `
+				SELECT historical_low_price, historical_low_date, cover_image_url 
+				FROM games WHERE id = $1;
+			`, g.ID).Scan(&histLow, &histDate, &g.CoverImageURL)
+			if histLow.Valid {
+				hl := histLow.Float64
+				g.HistoricalLowPrice = &hl
+			}
+			if histDate.Valid {
+				hd := histDate.Time
+				g.HistoricalLowDate = &hd
+			}
+
+			rowsPrices2, err2 := h.db.QueryContext(r.Context(), `
+				SELECT 
+					sp.id, st.id, st.name, st.slug, st.logo_url,
+					cp.regular_price, cp.current_price, cp.discount_percentage,
+					cp.is_on_sale, sp.product_url, cp.last_updated, sp.external_deal_id
+				FROM store_products sp
+				INNER JOIN stores st ON st.id = sp.store_id
+				INNER JOIN current_prices cp ON cp.store_product_id = sp.id
+				WHERE sp.game_id = $1 AND st.is_active = true
+				ORDER BY cp.current_price ASC, cp.discount_percentage DESC;
+			`, g.ID)
+			if err2 == nil {
+				currentPrices = make([]models.StorePriceInfo, 0)
+				for rowsPrices2.Next() {
+					var p models.StorePriceInfo
+					if err := rowsPrices2.Scan(
+						&p.StoreProductID, &p.StoreID, &p.StoreName, &p.StoreSlug, &p.StoreLogo,
+						&p.RegularPrice, &p.CurrentPrice, &p.DiscountPercentage,
+						&p.IsOnSale, &p.ProductURL, &p.LastUpdated, &p.ExternalDealID,
+					); err == nil {
+						currentPrices = append(currentPrices, p)
+					}
+				}
+				rowsPrices2.Close()
 			}
 		}
 	}

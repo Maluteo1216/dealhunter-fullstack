@@ -42,6 +42,7 @@ export interface Game {
   historical_low_price?: number;
   historical_low_date?: string;
   created_at: string;
+  stores_count?: number;
   best_deal?: BestDeal;
 }
 

@@ -163,6 +163,12 @@ export const api = {
     });
   },
 
+  enrichCatalog: (): Promise<{ message: string; enriched_games: number; stores_added: number }> => {
+    return request<{ message: string; enriched_games: number; stores_added: number }>('/api/v1/sync/enrich', {
+      method: 'POST',
+    });
+  },
+
   getSyncLogs: (): Promise<SyncLog[]> => {
     return request<SyncLog[]>('/api/v1/sync/logs');
   },

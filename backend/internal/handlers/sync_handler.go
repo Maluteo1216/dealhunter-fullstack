@@ -71,8 +71,29 @@ func (h *SyncHandler) ServerSync(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message":   "Sincronización directa desde servidor completada",
+		"message":   "Sincronización multi-tienda desde servidor completada exitosamente",
 		"processed": count,
+	})
+}
+
+// EnrichCatalog enriquece en lote videojuegos que solo tienen una tienda registrada
+func (h *SyncHandler) EnrichCatalog(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	enrichedGames, totalStores, err := h.syncService.EnrichCatalogMultiStore(r.Context(), 25)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Error al enriquecer catálogo: " + err.Error(),
+		})
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":        "Enriquecimiento multi-tienda completado exitosamente",
+		"enriched_games": enrichedGames,
+		"stores_added":   totalStores,
 	})
 }
 

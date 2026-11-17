@@ -77,6 +77,7 @@ type Game struct {
 	HistoricalLowPrice *float64   `json:"historical_low_price,omitempty"`
 	HistoricalLowDate  *time.Time `json:"historical_low_date,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
+	StoresCount        int        `json:"stores_count"`
 	BestDeal           *BestDeal  `json:"best_deal,omitempty"`
 	Genres             []Genre    `json:"genres,omitempty"`
 }
