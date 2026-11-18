@@ -88,6 +88,7 @@ func main() {
 		// Sincronización pública / administrativa
 		api.Post("/sync/ingest", syncHandler.IngestDeals)
 		api.Post("/sync/server", syncHandler.ServerSync)
+		api.Post("/sync/random", syncHandler.RandomSync)
 		api.Post("/sync/enrich", syncHandler.EnrichCatalog)
 		api.Get("/sync/logs", syncHandler.GetSyncLogs)
 

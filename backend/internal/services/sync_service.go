@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -42,14 +43,17 @@ func CleanSlug(title string) string {
 	return slug
 }
 
-// IngestDeals procesa un conjunto de ofertas y tiendas garantizando integridad referencial
-func (s *SyncService) IngestDeals(ctx context.Context, source string, payload models.SyncIngestPayload) (int, error) {
+// IngestDeals procesa un conjunto de ofertas y tiendas garantizando integridad referencial.
+// Si autoEnrich es true, consulta inmediatamente CheapShark para registrar las demás tiendas oficiales de cada juego añadido.
+func (s *SyncService) IngestDeals(ctx context.Context, source string, payload models.SyncIngestPayload, autoEnrich bool) (int, int, error) {
 	if s.db == nil {
-		return 0, fmt.Errorf("base de datos no conectada")
+		return 0, 0, fmt.Errorf("base de datos no conectada")
 	}
 
 	processedCount := 0
 	var syncErr error
+	var touchedGameIDs []int
+	seenGameIDs := make(map[int]bool)
 
 	// 1. Sincronizar Tiendas si vienen en el payload
 	for _, store := range payload.Stores {
@@ -284,6 +288,44 @@ func (s *SyncService) IngestDeals(ctx context.Context, source string, payload mo
 
 		if err := tx.Commit(); err == nil {
 			processedCount++
+			if !seenGameIDs[gameID] {
+				seenGameIDs[gameID] = true
+				touchedGameIDs = append(touchedGameIDs, gameID)
+			}
+		}
+	}
+
+	// 4. Auto-enriquecimiento integrado: si se solicita, consultar y agregar tiendas oficiales
+	// para los videojuegos que se acaban de insertar o actualizar
+	enrichedCount := 0
+	storesAddedTotal := 0
+	if autoEnrich && len(touchedGameIDs) > 0 {
+		limit := 25
+		count := 0
+		for _, gid := range touchedGameIDs {
+			if count >= limit {
+				break
+			}
+			var extGameID, steamAppID, title string
+			var storeCount int
+			err := s.db.QueryRowContext(ctx, `
+				SELECT 
+					COALESCE((SELECT sp.external_game_id FROM store_products sp WHERE sp.game_id = g.id AND sp.external_game_id IS NOT NULL AND sp.external_game_id != '' LIMIT 1), ''),
+					COALESCE(g.steam_app_id, ''),
+					g.title,
+					(SELECT COUNT(DISTINCT spc.store_id) FROM store_products spc WHERE spc.game_id = g.id)
+				FROM games g
+				WHERE g.id = $1;
+			`, gid).Scan(&extGameID, &steamAppID, &title, &storeCount)
+			if err == nil && storeCount <= 2 {
+				added, enrichErr := s.EnrichGameMultiStore(ctx, gid, extGameID, steamAppID, title)
+				if enrichErr == nil && added > 0 {
+					enrichedCount++
+					storesAddedTotal += added
+				}
+				count++
+				time.Sleep(80 * time.Millisecond) // Pausa de cortesía para respetar rate-limits
+			}
 		}
 	}
 
@@ -294,6 +336,9 @@ func (s *SyncService) IngestDeals(ctx context.Context, source string, payload mo
 		status = "error"
 		s := syncErr.Error()
 		errMsg = &s
+	} else if autoEnrich && enrichedCount > 0 {
+		msg := fmt.Sprintf("Auto-enriquecidos %d juegos (+%d tiendas oficiales)", enrichedCount, storesAddedTotal)
+		errMsg = &msg
 	}
 
 	_, _ = s.db.ExecContext(ctx, `
@@ -301,7 +346,7 @@ func (s *SyncService) IngestDeals(ctx context.Context, source string, payload mo
 		VALUES ($1, $2, $3, $4, NOW());
 	`, source, processedCount, status, errMsg)
 
-	return processedCount, syncErr
+	return processedCount, enrichedCount, syncErr
 }
 
 // Estructuras de respuesta para consulta completa de videojuego multi-tienda en CheapShark
@@ -726,14 +771,96 @@ func (s *SyncService) FetchFromServer(ctx context.Context) (int, error) {
 		Stores: stores,
 	}
 
-	// 3. Persistir todas las ofertas recolectadas
-	totalIngested, err := s.IngestDeals(ctx, "server_sync", payload)
+	// 3. Persistir todas las ofertas recolectadas con auto-enriquecimiento activado
+	totalIngested, _, err := s.IngestDeals(ctx, "server_sync", payload, true)
 	if err != nil {
 		return totalIngested, err
 	}
 
-	// 4. Enriquecimiento automático multi-tienda para los primeros 20 juegos del catálogo
-	_, _, _ = s.EnrichCatalogMultiStore(ctx, 20)
-
 	return totalIngested, nil
+}
+
+type RandomSyncResult struct {
+	DealsProcessed int    `json:"deals_processed"`
+	EnrichedGames  int    `json:"enriched_games"`
+	PageNumber     int    `json:"page_number"`
+	SortBy         string `json:"sort_by"`
+}
+
+// FetchRandomFromServer sincroniza ofertas aleatorias de CheapShark (página y criterio al azar)
+// e inmediatamente las auto-enriquece con los precios de todas las tiendas oficiales disponibles
+func (s *SyncService) FetchRandomFromServer(ctx context.Context) (*RandomSyncResult, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	// 1. Obtener lista oficial de tiendas
+	reqStores, err := http.NewRequestWithContext(ctx, "GET", "https://www.cheapshark.com/api/1.0/stores", nil)
+	if err != nil {
+		return nil, err
+	}
+	reqStores.Header.Set("User-Agent", CheapSharkUserAgent)
+	reqStores.Header.Set("Accept", "application/json")
+
+	var stores []models.CheapSharkStore
+	if respStores, err := client.Do(reqStores); err == nil {
+		defer respStores.Body.Close()
+		if respStores.StatusCode == http.StatusOK {
+			bodyStores, _ := io.ReadAll(respStores.Body)
+			_ = json.Unmarshal(bodyStores, &stores)
+		}
+	}
+
+	// 2. Parámetros aleatorios para descubrir juegos variados
+	sortOptions := []string{"Deal Rating", "Savings", "Reviews", "Metacritic", "Release", "recent"}
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	randomPage := r.Intn(20) + 1 // Páginas 1 a 20 para traer juegos nunca antes vistos
+	selectedSort := sortOptions[r.Intn(len(sortOptions))]
+
+	dealURL := fmt.Sprintf("https://www.cheapshark.com/api/1.0/deals?onSale=1&pageSize=60&pageNumber=%d&sortBy=%s",
+		randomPage, url.QueryEscape(selectedSort))
+
+	req, err := http.NewRequestWithContext(ctx, "GET", dealURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", CheapSharkUserAgent)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("error al conectar con CheapShark: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("CheapShark retornó código %d: %s", resp.StatusCode, string(body))
+	}
+
+	var deals []models.CheapSharkDeal
+	if err := json.NewDecoder(resp.Body).Decode(&deals); err != nil {
+		return nil, fmt.Errorf("error al decodificar ofertas de CheapShark: %w", err)
+	}
+
+	if len(deals) == 0 {
+		return nil, fmt.Errorf("CheapShark no retornó ofertas para la página %d", randomPage)
+	}
+
+	payload := models.SyncIngestPayload{
+		Deals:  deals,
+		Stores: stores,
+	}
+
+	// 3. Persistir y auto-enriquecer en el mismo paso
+	sourceName := fmt.Sprintf("server_random_p%d_%s", randomPage, CleanSlug(selectedSort))
+	processedCount, enrichedCount, err := s.IngestDeals(ctx, sourceName, payload, true)
+	if err != nil {
+		return nil, err
+	}
+
+	return &RandomSyncResult{
+		DealsProcessed: processedCount,
+		EnrichedGames:  enrichedCount,
+		PageNumber:     randomPage,
+		SortBy:         selectedSort,
+	}, nil
 }

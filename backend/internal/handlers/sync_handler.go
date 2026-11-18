@@ -38,12 +38,15 @@ func (h *SyncHandler) IngestDeals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	count, err := h.syncService.IngestDeals(r.Context(), "browser_ingest", payload)
+	autoEnrich := r.URL.Query().Get("auto_enrich") == "true" || r.URL.Query().Get("auto_enrich") == "1"
+
+	count, enriched, err := h.syncService.IngestDeals(r.Context(), "browser_ingest", payload, autoEnrich)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error":     "Error parcial durante la sincronización: " + err.Error(),
 			"processed": count,
+			"enriched":  enriched,
 		})
 		return
 	}
@@ -52,6 +55,27 @@ func (h *SyncHandler) IngestDeals(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"message":   "Sincronización completada exitosamente",
 		"processed": count,
+		"enriched":  enriched,
+	})
+}
+
+// RandomSync ejecuta el descubrimiento de ofertas aleatorias en CheapShark y auto-enriquece cada juego con múltiples tiendas
+func (h *SyncHandler) RandomSync(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	result, err := h.syncService.FetchRandomFromServer(r.Context())
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Error en sincronización aleatoria del servidor: " + err.Error(),
+		})
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "Sincronización aleatoria y auto-enriquecimiento completados exitosamente",
+		"result":  result,
 	})
 }
 

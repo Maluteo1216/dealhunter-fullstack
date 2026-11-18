@@ -156,8 +156,12 @@ export const api = {
   },
 
   // Sincronización en Vivo
-  ingestDeals: (payload: { deals: CheapSharkDeal[]; stores: CheapSharkStore[] }): Promise<{ message: string; processed: number }> => {
-    return request<{ message: string; processed: number }>('/api/v1/sync/ingest', {
+  ingestDeals: (
+    payload: { deals: CheapSharkDeal[]; stores: CheapSharkStore[] },
+    autoEnrich: boolean = false
+  ): Promise<{ message: string; processed: number; enriched?: number }> => {
+    const endpoint = autoEnrich ? '/api/v1/sync/ingest?auto_enrich=true' : '/api/v1/sync/ingest';
+    return request<{ message: string; processed: number; enriched?: number }>(endpoint, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
@@ -165,6 +169,28 @@ export const api = {
 
   serverSync: (): Promise<{ message: string; processed: number }> => {
     return request<{ message: string; processed: number }>('/api/v1/sync/server', {
+      method: 'POST',
+    });
+  },
+
+  randomServerSync: (): Promise<{
+    message: string;
+    result: {
+      deals_processed: number;
+      enriched_games: number;
+      page_number: number;
+      sort_by: string;
+    };
+  }> => {
+    return request<{
+      message: string;
+      result: {
+        deals_processed: number;
+        enriched_games: number;
+        page_number: number;
+        sort_by: string;
+      };
+    }>('/api/v1/sync/random', {
       method: 'POST',
     });
   },

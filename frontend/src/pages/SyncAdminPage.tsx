@@ -14,6 +14,8 @@ import {
   Loader2,
   Zap,
   ShoppingBag,
+  Shuffle,
+  Sparkles,
 } from 'lucide-react';
 
 export const SyncAdminPage: React.FC = () => {
@@ -23,6 +25,8 @@ export const SyncAdminPage: React.FC = () => {
   const [syncingMultiStore, setSyncingMultiStore] = useState<boolean>(false);
   const [syncingServer, setSyncingServer] = useState<boolean>(false);
   const [enriching, setEnriching] = useState<boolean>(false);
+  const [syncingRandom, setSyncingRandom] = useState<boolean>(false);
+  const [syncingRandomServer, setSyncingRandomServer] = useState<boolean>(false);
   const [syncProgressText, setSyncProgressText] = useState<string>('');
 
   const [syncStatus, setSyncStatus] = useState<{
@@ -82,12 +86,12 @@ export const SyncAdminPage: React.FC = () => {
         throw new Error('CheapShark no retornó ofertas.');
       }
 
-      setSyncProgressText(`Enviando ${allDeals.length} ofertas a PostgreSQL...`);
-      const result = await api.ingestDeals({ deals: allDeals, stores });
+      setSyncProgressText(`Enviando ${allDeals.length} ofertas a PostgreSQL y auto-enriqueciendo...`);
+      const result = await api.ingestDeals({ deals: allDeals, stores }, true);
 
       setSyncStatus({
         type: 'success',
-        message: `¡Sincronización completada! Se procesaron ${result.processed} ofertas (páginas ${startPage + 1} a ${startPage + pagesToFetch}) en la base de datos.`,
+        message: `¡Sincronización completada! Se procesaron ${result.processed} ofertas y se auto-enriquecieron con tiendas oficiales.`,
       });
       loadLogs();
     } catch (err: any) {
@@ -145,8 +149,8 @@ export const SyncAdminPage: React.FC = () => {
         throw new Error('No se pudieron obtener ofertas de las tiendas.');
       }
 
-      setSyncProgressText(`Persistiendo ${allDeals.length} ofertas multi-tienda en la base de datos...`);
-      const result = await api.ingestDeals({ deals: allDeals, stores });
+      setSyncProgressText(`Persistiendo ${allDeals.length} ofertas multi-tienda y auto-enriqueciendo catálogo...`);
+      const result = await api.ingestDeals({ deals: allDeals, stores }, true);
 
       // Ejecutar auto-enriquecimiento de los juegos para expandir sus tiendas
       setSyncProgressText('Enriqueciendo títulos principales con todas sus tiendas oficiales...');
@@ -217,7 +221,90 @@ export const SyncAdminPage: React.FC = () => {
     }
   };
 
-  const isBusy = syncingBrowser || syncingMultiStore || syncingServer || enriching;
+  // 5. Descubrimiento Aleatorio Híbrido (Vía Navegador)
+  const handleRandomSync = async () => {
+    setSyncingRandom(true);
+    setSyncStatus({ type: null, message: '' });
+
+    try {
+      const stores = await fetchCheapSharkStores();
+      // Seleccionar una página aleatoria entre 1 y 25 y un criterio de ordenación al azar
+      const randomPage = Math.floor(Math.random() * 25) + 1;
+      const sortOptions = ['Deal Rating', 'Savings', 'Reviews', 'Metacritic', 'Release', 'recent'];
+      const randomSort = sortOptions[Math.floor(Math.random() * sortOptions.length)];
+
+      setSyncProgressText(`Consultando CheapShark (Página aleatoria #${randomPage}, ordenado por ${randomSort})...`);
+
+      const dealsResp = await fetch(
+        `https://www.cheapshark.com/api/1.0/deals?onSale=1&pageSize=60&pageNumber=${randomPage}&sortBy=${encodeURIComponent(
+          randomSort
+        )}`
+      );
+
+      if (!dealsResp.ok) {
+        throw new Error(`CheapShark retornó código ${dealsResp.status}`);
+      }
+
+      const deals: CheapSharkDeal[] = await dealsResp.json();
+      if (!deals || deals.length === 0) {
+        throw new Error(`No se encontraron ofertas en la página aleatoria #${randomPage}`);
+      }
+
+      setSyncProgressText(
+        `Persistiendo ${deals.length} juegos aleatorios y auto-enriqueciendo con Steam, Epic, GOG, Fanatical...`
+      );
+
+      // Enviamos a la API con autoEnrich = true
+      const result = await api.ingestDeals({ deals, stores }, true);
+
+      setSyncStatus({
+        type: 'success',
+        message: `¡Juegos aleatorios añadidos y auto-enriquecidos! Se procesaron ${result.processed} ofertas de la Página #${randomPage} (${randomSort}). Los juegos ya cuentan con precios de múltiples tiendas oficiales.`,
+      });
+      loadLogs();
+    } catch (err: any) {
+      setSyncStatus({
+        type: 'error',
+        message: err.message || 'Error durante el descubrimiento aleatorio.',
+      });
+    } finally {
+      setSyncingRandom(false);
+      setSyncProgressText('');
+    }
+  };
+
+  // 6. Descubrimiento Aleatorio Nativo (En Servidor Go)
+  const handleRandomServerSync = async () => {
+    setSyncingRandomServer(true);
+    setSyncStatus({ type: null, message: '' });
+    setSyncProgressText('El backend Go está seleccionando página aleatoria en CheapShark y auto-enriqueciendo juegos...');
+
+    try {
+      const res = await api.randomServerSync();
+      setSyncStatus({
+        type: 'success',
+        message: `¡Servidor Go completó el descubrimiento aleatorio! Se descargaron ${res.result.deals_processed} ofertas de la Página #${res.result.page_number} (${res.result.sort_by}) y se auto-enriquecieron con todas sus tiendas oficiales.`,
+      });
+      loadLogs();
+    } catch (err: any) {
+      setSyncStatus({
+        type: 'error',
+        message: err.message || 'Error en descubrimiento aleatorio desde el servidor.',
+      });
+      loadLogs();
+    } finally {
+      setSyncingRandomServer(false);
+      setSyncProgressText('');
+    }
+  };
+
+  const isBusy =
+    syncingBrowser ||
+    syncingMultiStore ||
+    syncingServer ||
+    enriching ||
+    syncingRandom ||
+    syncingRandomServer;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
@@ -262,6 +349,70 @@ export const SyncAdminPage: React.FC = () => {
           <span>{syncProgressText}</span>
         </div>
       )}
+
+      {/* Tarjeta Destacada: Descubrimiento Aleatorio Auto-Enriquecido */}
+      <div className="bg-gradient-to-r from-purple-950/40 via-slate-900 to-brand-950/40 border border-purple-500/40 rounded-2xl p-6 sm:p-8 relative overflow-hidden shadow-2xl">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+          <div className="space-y-3 max-w-2xl">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 shadow-sm">
+                <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                Catálogo Aleatorio y Pre-Enriquecido
+              </span>
+              <span className="text-xs text-slate-400 hidden sm:inline">
+                • Cero juegos repetidos sin tiendas
+              </span>
+            </div>
+
+            <h2 className="text-2xl font-black text-white tracking-tight flex items-center gap-2">
+              <Shuffle className="w-6 h-6 text-purple-400" />
+              Descubrimiento Aleatorio Auto-Enriquecido
+            </h2>
+
+            <p className="text-sm text-slate-300 leading-relaxed">
+              Selecciona dinámicamente páginas aleatorias de CheapShark (páginas 1 a 25) y criterios al azar (Reviews, Metacritic, Savings, Release) para traer <strong>juegos totalmente nuevos</strong> y, en el mismo instante en que se insertan, <strong>los enriquece automáticamente con todas sus tiendas oficiales</strong> (Steam, Epic, GOG, Fanatical, GMG, Humble).
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row lg:flex-col gap-3 min-w-[280px]">
+            <button
+              onClick={handleRandomSync}
+              disabled={isBusy}
+              className="py-3 px-5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl font-bold text-xs sm:text-sm transition flex items-center justify-center gap-2 shadow-lg shadow-purple-600/30 disabled:opacity-50"
+            >
+              {syncingRandom ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Descubriendo y Auto-Enriqueciendo...
+                </>
+              ) : (
+                <>
+                  <Shuffle className="w-4 h-4" />
+                  🎲 60 Juegos al Azar Auto-Enriquecidos
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={handleRandomServerSync}
+              disabled={isBusy}
+              className="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-purple-200 border border-purple-500/30 rounded-xl font-semibold text-xs transition flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {syncingRandomServer ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
+                  Servidor Go en Proceso...
+                </>
+              ) : (
+                <>
+                  <Server className="w-3.5 h-3.5 text-purple-400" />
+                  Ejecutar Aleatorio en Backend Go
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* Tarjetas de Acción de Sincronización */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

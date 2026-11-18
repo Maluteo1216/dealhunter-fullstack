@@ -142,8 +142,9 @@ Todas las tablas cumplen con 3NF y utilizan `DECIMAL(12,2)` para evitar imprecis
 | `DELETE` | `/api/v1/wishlist/{gameId}` | Privado (JWT) | Elimina un juego de la wishlist. |
 | `GET` | `/api/v1/alerts` | Privado (JWT) | Lista notificaciones de precios disparadas. |
 | `PUT` | `/api/v1/alerts/{id}/read` | Privado (JWT) | Marca una alerta como leída. |
-| `POST` | `/api/v1/sync/ingest` | Público | Ingesta masiva transaccional de ofertas enviadas por el navegador. |
+| `POST` | `/api/v1/sync/ingest` | Público | Ingesta masiva transaccional de ofertas con soporte `?auto_enrich=true` para enriquecer tiendas en el mismo proceso. |
 | `POST` | `/api/v1/sync/server` | Público | Sincronización nativa directa ejecutada por Go en el servidor. |
+| `POST` | `/api/v1/sync/random` | Público | Descubrimiento aleatorio (página y criterio al azar) con auto-enriquecimiento integrado de tiendas. |
 | `POST` | `/api/v1/sync/enrich` | Público | Enriquecimiento en lote de juegos que solo tienen 1 tienda registrada. |
 | `GET` | `/api/v1/sync/logs` | Público | Historial de las últimas 15 ejecuciones de sincronización. |
 
