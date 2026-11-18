@@ -36,3 +36,44 @@ func TestCleanSlug(t *testing.T) {
 		})
 	}
 }
+
+func TestTitlesMatch(t *testing.T) {
+	tests := []struct {
+		titleA   string
+		titleB   string
+		expected bool
+	}{
+		{
+			titleA:   "DEATH STRANDING Director's Cut",
+			titleB:   "DEATH STRANDING Directors Cut",
+			expected: true,
+		},
+		{
+			titleA:   "DEATH STRANDING Director's Cut",
+			titleB:   "DEATH STRANDING: Director's Cut",
+			expected: true,
+		},
+		{
+			titleA:   "DEATH STRANDING Director's Cut",
+			titleB:   "Death Stranding (Director's Cut)",
+			expected: true,
+		},
+		{
+			titleA:   "DEATH STRANDING Director's Cut",
+			titleB:   "DEATH STRANDING 2: ON THE BEACH",
+			expected: false,
+		},
+		{
+			titleA:   "Cyberpunk 2077",
+			titleB:   "Cyberpunk 2077",
+			expected: true,
+		},
+	}
+
+	for _, tc := range tests {
+		match := TitlesMatch(tc.titleA, tc.titleB)
+		if match != tc.expected {
+			t.Errorf("TitlesMatch(%q, %q) = %v; esperaba %v", tc.titleA, tc.titleB, match, tc.expected)
+		}
+	}
+}

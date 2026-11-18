@@ -327,8 +327,17 @@ func (h *GameHandler) GetGameBySlug(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Si el juego solo tiene 1 tienda o ninguna, enriquecer en tiempo real con todas las tiendas de CheapShark
-	if len(currentPrices) <= 1 && h.syncService != nil {
+	// Verificar si el juego tiene las tiendas oficiales clave (Steam, Epic Games Store, GOG, Humble Bundle)
+	keyStoreNames := map[string]bool{"Steam": false, "Epic Games Store": false, "GOG": false, "Humble Store": false}
+	for _, p := range currentPrices {
+		if _, ok := keyStoreNames[p.StoreName]; ok {
+			keyStoreNames[p.StoreName] = true
+		}
+	}
+	missingKeyStore := !keyStoreNames["Steam"] || !keyStoreNames["Epic Games Store"] || !keyStoreNames["GOG"] || !keyStoreNames["Humble Store"]
+
+	// Si el juego tiene pocas tiendas o le falta alguna de las 4 tiendas prioritarias, enriquecer en tiempo real con CheapShark
+	if (len(currentPrices) < 4 || missingKeyStore) && h.syncService != nil {
 		var extGameID string
 		_ = h.db.QueryRowContext(r.Context(), `
 			SELECT COALESCE(external_game_id, '') FROM store_products 

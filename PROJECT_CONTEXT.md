@@ -164,10 +164,11 @@ const CheapSharkUserAgent = "DealHunter/1.0 (contact@dealhunter.app; +https://de
 2. **`/games?id={gameID}` (Ficha Integral del Juego):**
    - Devuelve **TODAS las tiendas oficiales** donde existe ese juego en ese instante (`deals: [{storeID: "1", price: "28.78"}, {storeID: "15", price: "21.99"}, {storeID: "23", price: "19.63"}]`).
    - También provee `cheapestPriceEver: { price: "...", date: ... }`.
-3. **`/deals?title={title}` (Búsqueda Cruzada de Ofertas por Título):**
-   - Cuando una edición específica en `/games?id={gameID}` solo tiene 1 tienda, el servicio consulta `/deals?title={title}` para encontrar si otras tiendas oficiales tienen ofertas bajo el mismo título (Steam, GOG, Epic, etc.).
+3. **Búsqueda Prioritaria de las 4 Tiendas Principales (Steam, Epic, GOG, Humble):**
+   - Si un juego carece de **Steam (`1`)**, **Epic Games Store (`25`)**, **GOG (`7`)** o **Humble Bundle (`11`)**, el motor ejecuta búsqueda cruzada obligatoria en `/deals?title={title}`, `/games?steamAppID={appID}` y consultas dirigidas por tienda (`/deals?storeID={id}&title={title}`).
+   - Utiliza normalización canónica alfanumérica (`NormalizeTitleForMatch` / `TitlesMatch`) para que títulos con variaciones ortográficas (como `"DEATH STRANDING Director's Cut"` vs `"DEATH STRANDING Directors Cut"`) coincidan al 100%.
 4. **Auto-Enriquecimiento (`EnrichGameMultiStore`):**
-   - Cuando un usuario abre la ficha de un juego (`GET /api/v1/games/{slug}`), si el juego solo tiene 1 tienda registrada, Go consulta CheapShark en segundo plano, descubre todas las demás tiendas, las guarda en la base de datos y responde con la tabla comparativa completa.
+   - Cuando un usuario abre la ficha de un juego (`GET /api/v1/games/{slug}`), si el juego tiene pocas tiendas o le falta alguna de las 4 tiendas clave, Go consulta CheapShark en tiempo real, descubre todas las demás tiendas, las guarda en la base de datos y responde con la tabla comparativa completa.
 
 ---
 
