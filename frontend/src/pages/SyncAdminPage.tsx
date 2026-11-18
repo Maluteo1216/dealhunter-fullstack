@@ -4,16 +4,10 @@ import { SyncLog, CheapSharkDeal, CheapSharkStore } from '../types';
 import {
   RefreshCw,
   Server,
-  CloudDownload,
   CheckCircle,
   AlertTriangle,
   History,
-  ShieldCheck,
-  Globe,
-  Database,
   Loader2,
-  Zap,
-  ShoppingBag,
   Shuffle,
   Sparkles,
 } from 'lucide-react';
@@ -21,10 +15,6 @@ import {
 export const SyncAdminPage: React.FC = () => {
   const [logs, setLogs] = useState<SyncLog[]>([]);
   const [loadingLogs, setLoadingLogs] = useState<boolean>(true);
-  const [syncingBrowser, setSyncingBrowser] = useState<boolean>(false);
-  const [syncingMultiStore, setSyncingMultiStore] = useState<boolean>(false);
-  const [syncingServer, setSyncingServer] = useState<boolean>(false);
-  const [enriching, setEnriching] = useState<boolean>(false);
   const [syncingRandom, setSyncingRandom] = useState<boolean>(false);
   const [syncingRandomServer, setSyncingRandomServer] = useState<boolean>(false);
   const [syncProgressText, setSyncProgressText] = useState<string>('');
@@ -61,167 +51,7 @@ export const SyncAdminPage: React.FC = () => {
     return [];
   };
 
-  // 1. Sincronización de páginas de ofertas (permite avanzar páginas para traer juegos nuevos)
-  const handleBrowserSync = async (pagesToFetch: number = 2, startPage: number = 0) => {
-    setSyncingBrowser(true);
-    setSyncStatus({ type: null, message: '' });
-    setSyncProgressText(`Obteniendo ofertas (páginas ${startPage + 1} a ${startPage + pagesToFetch})...`);
-
-    try {
-      const stores = await fetchCheapSharkStores();
-      const allDeals: CheapSharkDeal[] = [];
-
-      for (let page = startPage; page < startPage + pagesToFetch; page++) {
-        setSyncProgressText(`Descargando página ${page + 1} de CheapShark...`);
-        const dealsResp = await fetch(
-          `https://www.cheapshark.com/api/1.0/deals?onSale=1&pageSize=60&pageNumber=${page}`
-        );
-        if (dealsResp.ok) {
-          const pageDeals: CheapSharkDeal[] = await dealsResp.json();
-          allDeals.push(...pageDeals);
-        }
-      }
-
-      if (allDeals.length === 0) {
-        throw new Error('CheapShark no retornó ofertas.');
-      }
-
-      setSyncProgressText(`Enviando ${allDeals.length} ofertas a PostgreSQL y auto-enriqueciendo...`);
-      const result = await api.ingestDeals({ deals: allDeals, stores }, true);
-
-      setSyncStatus({
-        type: 'success',
-        message: `¡Sincronización completada! Se procesaron ${result.processed} ofertas y se auto-enriquecieron con tiendas oficiales.`,
-      });
-      loadLogs();
-    } catch (err: any) {
-      setSyncStatus({
-        type: 'error',
-        message: err.message || 'Error durante la sincronización desde el cliente.',
-      });
-    } finally {
-      setSyncingBrowser(false);
-      setSyncProgressText('');
-    }
-  };
-
-  // 2. Sincronización Masiva Multi-Tienda (Steam, Epic, Fanatical, GOG, GMG, Humble)
-  const handleMultiStoreSync = async () => {
-    setSyncingMultiStore(true);
-    setSyncStatus({ type: null, message: '' });
-    setSyncProgressText('Iniciando sincronización multi-tienda...');
-
-    try {
-      const stores = await fetchCheapSharkStores();
-
-      const storeEndpoints = [
-        { name: 'Ofertas Generales', url: 'https://www.cheapshark.com/api/1.0/deals?onSale=1&pageSize=60' },
-        { name: 'Steam', url: 'https://www.cheapshark.com/api/1.0/deals?storeID=1&pageSize=60' },
-        { name: 'Epic Games Store', url: 'https://www.cheapshark.com/api/1.0/deals?storeID=25&pageSize=60' },
-        { name: 'Fanatical', url: 'https://www.cheapshark.com/api/1.0/deals?storeID=15&pageSize=60' },
-        { name: 'GOG', url: 'https://www.cheapshark.com/api/1.0/deals?storeID=7&pageSize=60' },
-        { name: 'GreenManGaming', url: 'https://www.cheapshark.com/api/1.0/deals?storeID=3&pageSize=60' },
-        { name: 'Humble Store', url: 'https://www.cheapshark.com/api/1.0/deals?storeID=11&pageSize=60' },
-      ];
-
-      const allDeals: CheapSharkDeal[] = [];
-      const seenDeals = new Set<string>();
-
-      for (const st of storeEndpoints) {
-        setSyncProgressText(`Consultando catálogo de ${st.name}...`);
-        try {
-          const res = await fetch(st.url);
-          if (res.ok) {
-            const deals: CheapSharkDeal[] = await res.json();
-            for (const d of deals) {
-              if (!seenDeals.has(d.dealID)) {
-                seenDeals.add(d.dealID);
-                allDeals.push(d);
-              }
-            }
-          }
-        } catch (e) {
-          console.warn(`Error al consultar ${st.name}:`, e);
-        }
-      }
-
-      if (allDeals.length === 0) {
-        throw new Error('No se pudieron obtener ofertas de las tiendas.');
-      }
-
-      setSyncProgressText(`Persistiendo ${allDeals.length} ofertas multi-tienda y auto-enriqueciendo catálogo...`);
-      const result = await api.ingestDeals({ deals: allDeals, stores }, true);
-
-      // Ejecutar auto-enriquecimiento de los juegos para expandir sus tiendas
-      setSyncProgressText('Enriqueciendo títulos principales con todas sus tiendas oficiales...');
-      let enrichMsg = '';
-      try {
-        const enrichRes = await api.enrichCatalog();
-        enrichMsg = ` Además se enriquecieron ${enrichRes.enriched_games} títulos con ${enrichRes.stores_added} precios de tiendas adicionales.`;
-      } catch (e) {
-        console.warn('Aviso durante enriquecimiento:', e);
-      }
-
-      setSyncStatus({
-        type: 'success',
-        message: `¡Sincronización multi-tienda completada! Se procesaron ${result.processed} ofertas a lo largo de 6 tiendas oficiales.${enrichMsg}`,
-      });
-      loadLogs();
-    } catch (err: any) {
-      setSyncStatus({
-        type: 'error',
-        message: err.message || 'Error durante la sincronización multi-tienda.',
-      });
-    } finally {
-      setSyncingMultiStore(false);
-      setSyncProgressText('');
-    }
-  };
-
-  // 3. Enriquecer catálogo existente con múltiples tiendas
-  const handleEnrichCatalog = async () => {
-    setEnriching(true);
-    setSyncStatus({ type: null, message: '' });
-    try {
-      const res = await api.enrichCatalog();
-      setSyncStatus({
-        type: 'success',
-        message: `¡Enriquecimiento exitoso! Se actualizaron ${res.enriched_games} videojuegos agregando ${res.stores_added} precios en múltiples tiendas (Steam, Epic, GOG, Fanatical, etc.).`,
-      });
-      loadLogs();
-    } catch (err: any) {
-      setSyncStatus({
-        type: 'error',
-        message: err.message || 'Error al enriquecer el catálogo existente.',
-      });
-    } finally {
-      setEnriching(false);
-    }
-  };
-
-  // 4. Sincronización directa desde el servidor Go
-  const handleServerSync = async () => {
-    setSyncingServer(true);
-    setSyncStatus({ type: null, message: '' });
-    try {
-      const res = await api.serverSync();
-      setSyncStatus({
-        type: 'success',
-        message: `¡Servidor Go sincronizado exitosamente! Se procesaron ${res.processed} ofertas multi-tienda directamente desde el backend en Render.`,
-      });
-      loadLogs();
-    } catch (err: any) {
-      setSyncStatus({
-        type: 'error',
-        message: err.message || 'Error en sincronización nativa desde el servidor.',
-      });
-      loadLogs();
-    } finally {
-      setSyncingServer(false);
-    }
-  };
-
-  // 5. Descubrimiento Aleatorio Híbrido (Vía Navegador)
+  // 1. Descubrimiento Aleatorio Híbrido (Vía Cliente/Navegador con Auto-Enriquecimiento Multi-Tienda)
   const handleRandomSync = async () => {
     setSyncingRandom(true);
     setSyncStatus({ type: null, message: '' });
@@ -251,7 +81,7 @@ export const SyncAdminPage: React.FC = () => {
       }
 
       setSyncProgressText(
-        `Persistiendo ${deals.length} juegos aleatorios y auto-enriqueciendo con Steam, Epic, GOG, Fanatical...`
+        `Persistiendo ${deals.length} juegos aleatorios y auto-enriqueciendo con Steam, Epic, GOG, Humble Bundle...`
       );
 
       // Enviamos a la API con autoEnrich = true
@@ -259,7 +89,7 @@ export const SyncAdminPage: React.FC = () => {
 
       setSyncStatus({
         type: 'success',
-        message: `¡Juegos aleatorios añadidos y auto-enriquecidos! Se procesaron ${result.processed} ofertas de la Página #${randomPage} (${randomSort}). Los juegos ya cuentan con precios de múltiples tiendas oficiales.`,
+        message: `¡Juegos aleatorios añadidos y auto-enriquecidos! Se procesaron ${result.processed} ofertas de la Página #${randomPage} (${randomSort}). Todos los títulos se han enriquecido con sus tiendas oficiales disponibles (Steam, Epic, GOG, Humble).`,
       });
       loadLogs();
     } catch (err: any) {
@@ -273,7 +103,7 @@ export const SyncAdminPage: React.FC = () => {
     }
   };
 
-  // 6. Descubrimiento Aleatorio Nativo (En Servidor Go)
+  // 2. Descubrimiento Aleatorio Nativo en Backend Go (Render)
   const handleRandomServerSync = async () => {
     setSyncingRandomServer(true);
     setSyncStatus({ type: null, message: '' });
@@ -283,7 +113,7 @@ export const SyncAdminPage: React.FC = () => {
       const res = await api.randomServerSync();
       setSyncStatus({
         type: 'success',
-        message: `¡Servidor Go completó el descubrimiento aleatorio! Se descargaron ${res.result.deals_processed} ofertas de la Página #${res.result.page_number} (${res.result.sort_by}) y se auto-enriquecieron con todas sus tiendas oficiales.`,
+        message: `¡Servidor Go completó el descubrimiento aleatorio! Se descargaron ${res.result.deals_processed} ofertas de la Página #${res.result.page_number} (${res.result.sort_by}) y se auto-enriquecieron con Steam, Epic, GOG y Humble Store.`,
       });
       loadLogs();
     } catch (err: any) {
@@ -298,13 +128,7 @@ export const SyncAdminPage: React.FC = () => {
     }
   };
 
-  const isBusy =
-    syncingBrowser ||
-    syncingMultiStore ||
-    syncingServer ||
-    enriching ||
-    syncingRandom ||
-    syncingRandomServer;
+  const isBusy = syncingRandom || syncingRandomServer;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
@@ -312,10 +136,10 @@ export const SyncAdminPage: React.FC = () => {
       <div>
         <h1 className="text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
           <RefreshCw className="w-8 h-8 text-brand-400" />
-          Centro de Sincronización en Vivo
+          Centro de Sincronización Aleatoria
         </h1>
         <p className="text-sm text-slate-400 mt-1">
-          Alimenta y actualiza el catálogo con ofertas reales y precios multi-tienda desde la API oficial de CheapShark.
+          Alimenta y amplía el catálogo descubriendo nuevos juegos al azar desde CheapShark y enriqueciéndolos automáticamente con sus tiendas oficiales (Steam, Epic Games, GOG, Humble Store).
         </p>
       </div>
 
@@ -350,27 +174,27 @@ export const SyncAdminPage: React.FC = () => {
         </div>
       )}
 
-      {/* Tarjeta Destacada: Descubrimiento Aleatorio Auto-Enriquecido */}
+      {/* Tarjeta Principal: Descubrimiento Aleatorio Auto-Enriquecido */}
       <div className="bg-gradient-to-r from-purple-950/40 via-slate-900 to-brand-950/40 border border-purple-500/40 rounded-2xl p-6 sm:p-8 relative overflow-hidden shadow-2xl">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           <div className="space-y-3 max-w-2xl">
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 shadow-sm">
                 <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                Catálogo Aleatorio y Pre-Enriquecido
+                Sincronización Exclusiva y Auto-Enriquecida
               </span>
               <span className="text-xs text-slate-400 hidden sm:inline">
-                • Cero juegos repetidos sin tiendas
+                • Tiendas prioritarias: Steam, Epic, GOG, Humble
               </span>
             </div>
 
             <h2 className="text-2xl font-black text-white tracking-tight flex items-center gap-2">
               <Shuffle className="w-6 h-6 text-purple-400" />
-              Descubrimiento Aleatorio Auto-Enriquecido
+              Descubrimiento Aleatorio con Pre-Enriquecimiento
             </h2>
 
             <p className="text-sm text-slate-300 leading-relaxed">
-              Selecciona dinámicamente páginas aleatorias de CheapShark (páginas 1 a 25) y criterios al azar (Reviews, Metacritic, Savings, Release) para traer <strong>juegos totalmente nuevos</strong> y, en el mismo instante en que se insertan, <strong>los enriquece automáticamente con todas sus tiendas oficiales</strong> (Steam, Epic, GOG, Fanatical, GMG, Humble).
+              Elige aleatoriamente páginas del catálogo de CheapShark (páginas 1 a 25) y criterios al azar (Reviews, Metacritic, Savings, Release) para traer <strong>juegos nuevos e inéditos</strong> a la plataforma. Durante la misma inserción, consulta CheapShark para vincular automáticamente <strong>Steam, Epic Games Store, GOG y Humble Bundle</strong> si el juego está disponible en ellas.
             </p>
           </div>
 
@@ -407,146 +231,6 @@ export const SyncAdminPage: React.FC = () => {
                 <>
                   <Server className="w-3.5 h-3.5 text-purple-400" />
                   Ejecutar Aleatorio en Backend Go
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Tarjetas de Acción de Sincronización */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Opción 1: Sincronización Masiva Multi-Tienda (Recomendada) */}
-        <div className="bg-slate-900 border border-brand-500/40 rounded-2xl p-6 relative overflow-hidden shadow-xl flex flex-col justify-between">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-brand-500/20 text-brand-400 border border-brand-500/30">
-                <ShieldCheck className="w-3.5 h-3.5" /> Recomendado
-              </span>
-              <ShoppingBag className="w-5 h-5 text-brand-400" />
-            </div>
-
-            <h3 className="text-lg font-bold text-white">
-              Sincronización Multi-Tienda Masiva
-            </h3>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Consulta de forma paralela <strong>Steam, Epic Games, GOG, Fanatical, GreenManGaming y Humble Store</strong> (300+ ofertas) garantizando que los juegos muestren comparativas de precios entre múltiples tiendas.
-            </p>
-          </div>
-
-          <div className="mt-6 pt-4 border-t border-slate-800 space-y-2">
-            <button
-              onClick={handleMultiStoreSync}
-              disabled={isBusy}
-              className="w-full py-2.5 px-4 bg-brand-600 hover:bg-brand-500 text-white rounded-xl font-bold text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-brand-600/20 disabled:opacity-50"
-            >
-              {syncingMultiStore ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Sincronizando 6 Tiendas...
-                </>
-              ) : (
-                <>
-                  <Zap className="w-4 h-4" />
-                  Sincronizar 6 Tiendas (300+ Ofertas)
-                </>
-              )}
-            </button>
-
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => handleBrowserSync(1, 0)}
-                disabled={isBusy}
-                className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium transition disabled:opacity-50"
-                title="Página 1 (Ofertas destacadas #1 a #60)"
-              >
-                Pág. 1 (60 Ofertas)
-              </button>
-
-              <button
-                onClick={() => handleBrowserSync(2, 1)}
-                disabled={isBusy}
-                className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium transition disabled:opacity-50"
-                title="Descarga las ofertas #60 a #180 de CheapShark para agregar juegos totalmente nuevos"
-              >
-                +120 Juegos Nuevos
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Opción 2: Enriquecimiento de Catálogo Existente */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between shadow-xl">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-amber-400 uppercase tracking-wider flex items-center gap-1">
-                <Zap className="w-3.5 h-3.5" /> Multi-Store Lookup
-              </span>
-              <Globe className="w-5 h-5 text-slate-400" />
-            </div>
-
-            <h3 className="text-lg font-bold text-white">
-              Enriquecer Juegos Existentes
-            </h3>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Toma los videojuegos existentes en tu base de datos y consulta la API individual de CheapShark para cada uno, extrayendo y registrando sus precios en <strong>todas las demás tiendas oficiales disponibles</strong>.
-            </p>
-          </div>
-
-          <div className="mt-6 pt-4 border-t border-slate-800">
-            <button
-              onClick={handleEnrichCatalog}
-              disabled={isBusy}
-              className="w-full py-2.5 px-4 bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 border border-amber-500/40 rounded-xl font-bold text-xs transition flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              {enriching ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Enriqueciendo Títulos...
-                </>
-              ) : (
-                <>
-                  <CloudDownload className="w-4 h-4" />
-                  Enriquecer Juegos Existentes
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {/* Opción 3: Sincronización Directa de Servidor (Go) */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between shadow-xl">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                Backend Go Directo
-              </span>
-              <Server className="w-5 h-5 text-slate-400" />
-            </div>
-
-            <h3 className="text-lg font-bold text-white">
-              Sincronización Nativa en Servidor
-            </h3>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Ejecuta la sincronización multi-tienda directamente desde el servidor Go en Render, utilizando el encabezado descriptivo oficial requerido por CheapShark para evitar bloqueos HTTP 400.
-            </p>
-          </div>
-
-          <div className="mt-6 pt-4 border-t border-slate-800">
-            <button
-              onClick={handleServerSync}
-              disabled={isBusy}
-              className="w-full py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-bold text-xs transition flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              {syncingServer ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Ejecutando en Servidor Go...
-                </>
-              ) : (
-                <>
-                  <Database className="w-4 h-4" />
-                  Disparar Sincronización en Go
                 </>
               )}
             </button>
@@ -591,7 +275,7 @@ export const SyncAdminPage: React.FC = () => {
               ) : logs.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-8 text-center text-slate-500">
-                    Aún no se han ejecutado sincronizaciones. Haz clic en una de las opciones arriba.
+                    Aún no se han ejecutado sincronizaciones. Haz clic en "60 Juegos al Azar Auto-Enriquecidos" para poblar el catálogo.
                   </td>
                 </tr>
               ) : (
@@ -599,7 +283,11 @@ export const SyncAdminPage: React.FC = () => {
                   <tr key={log.id} className="hover:bg-slate-800/30 transition">
                     <td className="py-3 px-4 text-slate-400 font-mono">#{log.id}</td>
                     <td className="py-3 px-4 font-medium text-slate-200">
-                      {log.source === 'browser_ingest' ? 'Cliente (Navegador)' : 'Servidor (Go)'}
+                      {log.source.includes('random')
+                        ? 'Descubrimiento Aleatorio'
+                        : log.source === 'browser_ingest'
+                        ? 'Cliente (Navegador)'
+                        : 'Servidor (Go)'}
                     </td>
                     <td className="py-3 px-4 text-center font-bold text-slate-100">
                       {log.deals_processed}

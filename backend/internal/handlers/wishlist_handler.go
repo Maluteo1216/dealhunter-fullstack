@@ -135,18 +135,26 @@ func (h *WishlistHandler) AddToWishlist(w http.ResponseWriter, r *http.Request) 
 		JOIN current_prices cp ON cp.store_product_id = sp.id
 		JOIN stores st ON st.id = sp.store_id
 		JOIN games g ON g.id = sp.game_id
-		WHERE sp.game_id = $1
+		WHERE sp.game_id = $1 AND st.is_active = true
 		ORDER BY cp.current_price ASC
 		LIMIT 1;
 	`, req.GameID).Scan(&bestPrice, &storeName, &gameTitle)
 
 	if err == nil && bestPrice <= req.TargetPrice {
-		msg := fmt.Sprintf("¡%s ya está a solo $%.2f en %s (por debajo de tu objetivo de $%.2f)!", gameTitle, bestPrice, storeName, req.TargetPrice)
-		_, _ = h.db.ExecContext(r.Context(), `
-			INSERT INTO price_alerts (wishlist_id, store_name, triggered_price, message, is_read, triggered_at)
-			VALUES ($1, $2, $3, $4, false, NOW())
-			ON CONFLICT DO NOTHING;
-		`, wishlistID, storeName, bestPrice, msg)
+		var countExisting int
+		_ = h.db.QueryRowContext(r.Context(), `
+			SELECT COUNT(*) FROM price_alerts 
+			WHERE wishlist_id = $1 AND store_name = $2 
+			  AND triggered_price = $3 AND triggered_at > NOW() - INTERVAL '24 hours';
+		`, wishlistID, storeName, bestPrice).Scan(&countExisting)
+
+		if countExisting == 0 {
+			msg := fmt.Sprintf("¡%s ya está a solo $%.2f en %s (por debajo de tu objetivo de $%.2f)!", gameTitle, bestPrice, storeName, req.TargetPrice)
+			_, _ = h.db.ExecContext(r.Context(), `
+				INSERT INTO price_alerts (wishlist_id, store_name, triggered_price, message, is_read, triggered_at)
+				VALUES ($1, $2, $3, $4, false, NOW());
+			`, wishlistID, storeName, bestPrice, msg)
+		}
 	}
 
 	w.WriteHeader(http.StatusOK)

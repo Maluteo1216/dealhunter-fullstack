@@ -3,7 +3,6 @@ import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { GameDetail } from '../types';
 import { StoreTable } from '../components/StoreTable';
-import { PriceHistoryChart } from '../components/PriceHistoryChart';
 import { useAuth } from '../context/AuthContext';
 import {
   ArrowLeft,
@@ -18,6 +17,7 @@ import {
   DollarSign,
   Info,
   RefreshCw,
+  Trash2,
 } from 'lucide-react';
 
 export const GameDetailPage: React.FC = () => {
@@ -32,7 +32,27 @@ export const GameDetailPage: React.FC = () => {
   const [targetPrice, setTargetPrice] = useState<string>('');
   const [wishlistSuccess, setWishlistSuccess] = useState<boolean>(false);
   const [wishlistLoading, setWishlistLoading] = useState<boolean>(false);
+  const [existingWishlist, setExistingWishlist] = useState<{ id: number; target_price: number } | null>(null);
   const [isSearchingStores, setIsSearchingStores] = useState<boolean>(false);
+
+  const checkWishlist = async (gameId: number) => {
+    if (!isAuthenticated) {
+      setExistingWishlist(null);
+      return;
+    }
+    try {
+      const items = await api.getWishlist();
+      const found = items.find((it) => it.game_id === gameId);
+      if (found) {
+        setExistingWishlist({ id: found.id, target_price: found.target_price });
+        setTargetPrice(found.target_price.toString());
+      } else {
+        setExistingWishlist(null);
+      }
+    } catch {
+      // ignore
+    }
+  };
 
   const handleEnrichGame = async () => {
     if (!slug) return;
@@ -60,11 +80,11 @@ export const GameDetailPage: React.FC = () => {
         setDetail(data);
         if (data.current_prices.length > 0) {
           const minPrice = Math.min(...data.current_prices.map((p) => p.current_price));
-          // Sugerir como precio objetivo el precio más bajo actual o un 20% menos
           setTargetPrice((minPrice * 0.8).toFixed(2));
         } else {
           setTargetPrice('9.99');
         }
+        checkWishlist(data.game.id);
       })
       .catch((err) => {
         setError(err.message || 'No se pudo cargar la información del videojuego');
@@ -72,7 +92,7 @@ export const GameDetailPage: React.FC = () => {
       .finally(() => {
         setLoading(false);
       });
-  }, [slug]);
+  }, [slug, isAuthenticated]);
 
   const handleSaveWishlist = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,9 +113,27 @@ export const GameDetailPage: React.FC = () => {
       setWishlistLoading(true);
       await api.addToWishlist(detail.game.id, priceNum);
       setWishlistSuccess(true);
+      setExistingWishlist({ id: detail.game.id, target_price: priceNum });
       setTimeout(() => setWishlistSuccess(false), 4000);
     } catch (err: any) {
       alert(err.message || 'Error al guardar alerta');
+    } finally {
+      setWishlistLoading(false);
+    }
+  };
+
+  const handleRemoveWishlist = async () => {
+    if (!detail?.game?.id) return;
+    try {
+      setWishlistLoading(true);
+      await api.removeFromWishlist(detail.game.id);
+      setExistingWishlist(null);
+      if (detail.current_prices.length > 0) {
+        const minPrice = Math.min(...detail.current_prices.map((p) => p.current_price));
+        setTargetPrice((minPrice * 0.8).toFixed(2));
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error al remover de la lista de deseos');
     } finally {
       setWishlistLoading(false);
     }
@@ -129,7 +167,7 @@ export const GameDetailPage: React.FC = () => {
     );
   }
 
-  const { game, current_prices, price_history } = detail;
+  const { game, current_prices } = detail;
   const bestCurrentPrice = current_prices.length > 0 ? current_prices[0] : null;
 
   return (
@@ -210,11 +248,18 @@ export const GameDetailPage: React.FC = () => {
           {/* Widget de Alerta / Wishlist */}
           <div className="mt-6 pt-6 border-t border-slate-800">
             <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 max-w-lg">
-              <div className="flex items-center gap-2 mb-2">
-                <Bell className="w-4 h-4 text-brand-400" />
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                  Configurar Alerta de Precio (Wishlist)
-                </h4>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <Bell className="w-4 h-4 text-brand-400" />
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                    Configurar Alerta de Precio (Wishlist)
+                  </h4>
+                </div>
+                {existingWishlist && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                    En tu Wishlist (${existingWishlist.target_price.toFixed(2)})
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400 mb-3">
                 Te notificaremos cuando el juego baje o alcance este precio en cualquiera de las tiendas.
@@ -239,8 +284,19 @@ export const GameDetailPage: React.FC = () => {
                   className="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-brand-600/20 disabled:opacity-50"
                 >
                   <Heart className="w-3.5 h-3.5 fill-current" />
-                  {wishlistLoading ? 'Guardando...' : 'Guardar Alerta'}
+                  {wishlistLoading ? 'Guardando...' : existingWishlist ? 'Actualizar Alerta' : 'Guardar Alerta'}
                 </button>
+                {existingWishlist && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveWishlist}
+                    disabled={wishlistLoading}
+                    className="p-2 rounded-lg bg-rose-950/40 hover:bg-rose-900 text-rose-400 border border-rose-800 transition"
+                    title="Remover de mi lista de deseos"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </form>
 
               {wishlistSuccess && (
@@ -304,11 +360,6 @@ export const GameDetailPage: React.FC = () => {
           prices={current_prices}
           historicalLowPrice={game.historical_low_price}
         />
-      </div>
-
-      {/* Gráfica de Serie Temporal (Recharts) */}
-      <div className="space-y-4">
-        <PriceHistoryChart history={price_history} />
       </div>
     </div>
   );

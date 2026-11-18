@@ -62,8 +62,64 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 	}
 	offset := (page - 1) * limit
 
-	// Construcción dinámica de consulta SQL con CTE para seleccionar la mejor oferta por juego
-	baseQuery := `
+	var dealWhereClauses []string
+	var gameWhereClauses []string
+	var args []interface{}
+	argIdx := 1
+	hasDealFilter := false
+
+	// Filtro de tienda: filtra dentro del pool de ofertas para mostrar la oferta real de dicha tienda
+	if storeParam != "" {
+		dealWhereClauses = append(dealWhereClauses, fmt.Sprintf("(st.external_store_id = $%d OR st.slug = $%d)", argIdx, argIdx))
+		args = append(args, storeParam)
+		argIdx++
+		hasDealFilter = true
+	}
+
+	// Filtro de descuento mínimo: filtra ofertas que cumplan con el porcentaje de ahorro solicitado
+	if minDiscountStr != "" {
+		if minDisc, err := strconv.ParseFloat(minDiscountStr, 64); err == nil && minDisc > 0 {
+			dealWhereClauses = append(dealWhereClauses, fmt.Sprintf("cp.discount_percentage >= $%d", argIdx))
+			args = append(args, minDisc)
+			argIdx++
+			hasDealFilter = true
+		}
+	}
+
+	// Filtro de precio máximo: filtra ofertas con precio menor o igual al fijado
+	if maxPriceStr != "" {
+		if maxP, err := strconv.ParseFloat(maxPriceStr, 64); err == nil && maxP >= 0 {
+			dealWhereClauses = append(dealWhereClauses, fmt.Sprintf("cp.current_price <= $%d", argIdx))
+			args = append(args, maxP)
+			argIdx++
+			hasDealFilter = true
+		}
+	}
+
+	// Búsqueda textual por título o slug
+	if search != "" {
+		gameWhereClauses = append(gameWhereClauses, fmt.Sprintf("(g.title ILIKE $%d OR g.slug ILIKE $%d)", argIdx, argIdx))
+		args = append(args, "%"+search+"%")
+		argIdx++
+	}
+
+	dealWhereSQL := ""
+	if len(dealWhereClauses) > 0 {
+		dealWhereSQL = " AND " + strings.Join(dealWhereClauses, " AND ")
+	}
+
+	joinType := "LEFT JOIN"
+	if hasDealFilter {
+		joinType = "INNER JOIN"
+	}
+
+	gameWhereSQL := "WHERE 1=1"
+	if len(gameWhereClauses) > 0 {
+		gameWhereSQL += " AND " + strings.Join(gameWhereClauses, " AND ")
+	}
+
+	// Construcción dinámica de consulta SQL con CTE seleccionando la mejor oferta según los filtros aplicados
+	baseQuery := fmt.Sprintf(`
 		WITH ranked_deals AS (
 			SELECT 
 				sp.game_id,
@@ -82,7 +138,7 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 			FROM store_products sp
 			INNER JOIN current_prices cp ON cp.store_product_id = sp.id
 			INNER JOIN stores st ON st.id = sp.store_id
-			WHERE st.is_active = true
+			WHERE st.is_active = true %s
 		)
 		SELECT 
 			g.id, g.title, g.slug, COALESCE(g.description, ''), COALESCE(g.cover_image_url, ''),
@@ -91,49 +147,9 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 			rd.current_price, rd.discount_percentage, rd.product_url, rd.external_deal_id,
 			COALESCE((SELECT COUNT(DISTINCT spc.store_id) FROM store_products spc WHERE spc.game_id = g.id), 0) AS stores_count
 		FROM games g
-		LEFT JOIN ranked_deals rd ON rd.game_id = g.id AND rd.rank = 1
-		WHERE 1=1
-	`
-
-	var whereClauses []string
-	var args []interface{}
-	argIdx := 1
-
-	if search != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("(g.title ILIKE $%d OR g.slug ILIKE $%d)", argIdx, argIdx))
-		args = append(args, "%"+search+"%")
-		argIdx++
-	}
-
-	if storeParam != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf(`EXISTS (
-			SELECT 1 FROM store_products sp2 
-			JOIN stores st2 ON st2.id = sp2.store_id 
-			WHERE sp2.game_id = g.id AND (st2.external_store_id = $%d OR st2.slug = $%d)
-		)`, argIdx, argIdx))
-		args = append(args, storeParam)
-		argIdx++
-	}
-
-	if minDiscountStr != "" {
-		if minDisc, err := strconv.ParseFloat(minDiscountStr, 64); err == nil && minDisc > 0 {
-			whereClauses = append(whereClauses, fmt.Sprintf("rd.discount_percentage >= $%d", argIdx))
-			args = append(args, minDisc)
-			argIdx++
-		}
-	}
-
-	if maxPriceStr != "" {
-		if maxP, err := strconv.ParseFloat(maxPriceStr, 64); err == nil && maxP >= 0 {
-			whereClauses = append(whereClauses, fmt.Sprintf("rd.current_price <= $%d", argIdx))
-			args = append(args, maxP)
-			argIdx++
-		}
-	}
-
-	if len(whereClauses) > 0 {
-		baseQuery += " AND " + strings.Join(whereClauses, " AND ")
-	}
+		%s ranked_deals rd ON rd.game_id = g.id AND rd.rank = 1
+		%s
+	`, dealWhereSQL, joinType, gameWhereSQL)
 
 	// Consulta de conteo total
 	countQuery := fmt.Sprintf(`

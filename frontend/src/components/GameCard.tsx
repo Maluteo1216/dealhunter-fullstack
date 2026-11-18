@@ -7,14 +7,17 @@ import { api } from '../api/client';
 
 interface GameCardProps {
   game: Game;
+  isWishlisted?: boolean;
   onWishlistToggled?: () => void;
 }
 
-export const GameCard: React.FC<GameCardProps> = ({ game, onWishlistToggled }) => {
+export const GameCard: React.FC<GameCardProps> = ({ game, isWishlisted = false, onWishlistToggled }) => {
   const { isAuthenticated } = useAuth();
   const [imageError, setImageError] = useState(false);
   const [isWishlisting, setIsWishlisting] = useState(false);
-  const [wishlisted, setWishlisted] = useState(false);
+  const [localWishlisted, setLocalWishlisted] = useState<boolean | null>(null);
+
+  const effectiveWishlisted = localWishlisted !== null ? localWishlisted : isWishlisted;
 
   const bestDeal = game.best_deal;
   const isHistoricalLow =
@@ -27,18 +30,23 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onWishlistToggled }) =
     e.preventDefault();
     e.stopPropagation();
     if (!isAuthenticated) {
-      alert('Inicia sesión para guardar este juego en tu lista de deseos');
+      alert('Inicia sesión para gestionar este juego en tu lista de deseos');
       return;
     }
 
     try {
       setIsWishlisting(true);
-      const targetPrice = bestDeal ? bestDeal.current_price : 9.99;
-      await api.addToWishlist(game.id, targetPrice);
-      setWishlisted(true);
+      if (effectiveWishlisted) {
+        await api.removeFromWishlist(game.id);
+        setLocalWishlisted(false);
+      } else {
+        const targetPrice = bestDeal ? bestDeal.current_price : 9.99;
+        await api.addToWishlist(game.id, targetPrice);
+        setLocalWishlisted(true);
+      }
       onWishlistToggled?.();
     } catch (err: any) {
-      alert(err.message || 'Error al agregar a wishlist');
+      alert(err.message || 'Error al actualizar lista de deseos');
     } finally {
       setIsWishlisting(false);
     }
@@ -84,13 +92,13 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onWishlistToggled }) =
           onClick={handleQuickWishlist}
           disabled={isWishlisting}
           className={`absolute top-2.5 right-2.5 p-1.5 rounded-lg backdrop-blur-md transition z-10 ${
-            wishlisted
-              ? 'bg-rose-600 text-white'
+            effectiveWishlisted
+              ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/40'
               : 'bg-slate-950/60 text-slate-300 hover:text-rose-400 hover:bg-slate-950/80'
           }`}
-          title="Guardar en Wishlist"
+          title={effectiveWishlisted ? "Remover de Wishlist" : "Guardar en Wishlist"}
         >
-          <Heart className={`w-4 h-4 ${wishlisted ? 'fill-current' : ''}`} />
+          <Heart className={`w-4 h-4 ${effectiveWishlisted ? 'fill-current text-white' : ''}`} />
         </button>
 
         {/* Store Badge */}

@@ -82,9 +82,8 @@ El proyecto **DEBE** permanecer dividido en **3 carpetas independientes**, cada 
         ├── /components
         │   ├── Navbar.tsx       # Barra de navegación con contador de alertas
         │   ├── ServerWakeBanner.tsx # Banner discreto cuando Render despierta del reposo
-        │   ├── GameCard.tsx     # Tarjeta de juego con ofertas, insignias y wishlist
+        │   ├── GameCard.tsx     # Tarjeta de juego con ofertas, insignias y wishlist interactiva
         │   ├── StoreTable.tsx   # Tabla comparativa multi-tienda ordenada por precio
-        │   ├── PriceHistoryChart.tsx # Gráfica interactiva Recharts de fluctuación histórica
         │   └── GoogleLoginButton.tsx # Botón oficial de Google Identity Services
         └── /pages
             ├── HomePage.tsx     # Explorador con búsqueda debounced y filtros avanzados
@@ -159,16 +158,18 @@ const CheapSharkUserAgent = "DealHunter/1.0 (contact@dealhunter.app; +https://de
 ```
 
 ### Cómo Funciona CheapShark y la Comparación Multi-Tienda
-1. **`/deals?onSale=1` (Listado General de Ofertas):**
-   - Devuelve las ofertas con mayor `dealRating` de la red. Por diseño, CheapShark agrupa por mejor oferta, por lo que cada elemento representa 1 sola tienda.
-2. **`/games?id={gameID}` (Ficha Integral del Juego):**
-   - Devuelve **TODAS las tiendas oficiales** donde existe ese juego en ese instante (`deals: [{storeID: "1", price: "28.78"}, {storeID: "15", price: "21.99"}, {storeID: "23", price: "19.63"}]`).
-   - También provee `cheapestPriceEver: { price: "...", date: ... }`.
+1. **Descubrimiento Aleatorio Auto-Enriquecido (`/sync/random`):**
+   - Selecciona páginas aleatorias (1 a 25) y criterios al azar (Reviews, Metacritic, Savings, Release) para traer juegos nuevos continuamente.
+   - En el mismo proceso de ingesta, auto-enriquece cada título agregando todas las tiendas oficiales disponibles, garantizando las 4 tiendas clave: **Steam (`1`)**, **Epic Games Store (`25`)**, **GOG (`7`)** y **Humble Store (`11`)**.
+2. **`/games?id={gameID}` (Ficha Integral del Juego en CheapShark):**
+   - Devuelve todas las tiendas oficiales donde existe ese juego en ese instante.
 3. **Búsqueda Prioritaria de las 4 Tiendas Principales (Steam, Epic, GOG, Humble):**
-   - Si un juego carece de **Steam (`1`)**, **Epic Games Store (`25`)**, **GOG (`7`)** o **Humble Bundle (`11`)**, el motor ejecuta búsqueda cruzada obligatoria en `/deals?title={title}`, `/games?steamAppID={appID}` y consultas dirigidas por tienda (`/deals?storeID={id}&title={title}`).
-   - Utiliza normalización canónica alfanumérica (`NormalizeTitleForMatch` / `TitlesMatch`) para que títulos con variaciones ortográficas (como `"DEATH STRANDING Director's Cut"` vs `"DEATH STRANDING Directors Cut"`) coincidan al 100%.
+   - El motor ejecuta búsqueda cruzada obligatoria en `/games?steamAppID={appID}` (con soporte de respuesta en objeto/array), `/games?title={title}`, `/deals?title={title}` y consultas dirigidas por tienda (`/deals?storeID={id}&title={title}`).
+   - Utiliza normalización canónica alfanumérica (`NormalizeTitleForMatch` / `TitlesMatch`) que ignora puntuaciones y diferencias ortográficas, previniendo falsos positivos con DLCs o secuelas.
 4. **Auto-Enriquecimiento (`EnrichGameMultiStore`):**
-   - Cuando un usuario abre la ficha de un juego (`GET /api/v1/games/{slug}`), si el juego tiene pocas tiendas o le falta alguna de las 4 tiendas clave, Go consulta CheapShark en tiempo real, descubre todas las demás tiendas, las guarda en la base de datos y responde con la tabla comparativa completa.
+   - Cuando un usuario abre la ficha de un juego (`GET /api/v1/games/{slug}`) o presiona *"Buscar en Más Tiendas"*, si carece de tiendas clave o tiene pocas tiendas, Go consulta CheapShark en tiempo real, descubre todas las demás tiendas, guarda los precios y dispara alertas a los usuarios cuya wishlist coincida con los precios descubiertos.
+5. **Motor de Filtros a Nivel de Oferta (`GetGames`):**
+   - La consulta SQL utiliza una CTE dinámica con `INNER JOIN` o `LEFT JOIN` que filtra directamente sobre el pool de ofertas (`store`, `min_discount`, `max_price`), garantizando que la tarjeta del juego muestre exactamente la oferta de la tienda y descuento seleccionados.
 
 ---
 

@@ -2,6 +2,7 @@ import React, { useEffect, useState, useTransition } from 'react';
 import { api } from '../api/client';
 import { Game, Store } from '../types';
 import { GameCard } from '../components/GameCard';
+import { useAuth } from '../context/AuthContext';
 import {
   Search,
   SlidersHorizontal,
@@ -13,11 +14,14 @@ import {
   Store as StoreIcon,
   RotateCcw,
   Sparkles,
+  X,
 } from 'lucide-react';
 
 export const HomePage: React.FC = () => {
+  const { isAuthenticated } = useAuth();
   const [games, setGames] = useState<Game[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
+  const [wishlistIds, setWishlistIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState<boolean>(true);
   const [total, setTotal] = useState<number>(0);
   const [totalPages, setTotalPages] = useState<number>(1);
@@ -52,6 +56,24 @@ export const HomePage: React.FC = () => {
       .then(setStores)
       .catch((err) => console.warn('No se pudieron cargar las tiendas:', err));
   }, []);
+
+  // Cargar lista de IDs en lista de deseos del usuario
+  const loadWishlistIds = async () => {
+    if (!isAuthenticated) {
+      setWishlistIds(new Set());
+      return;
+    }
+    try {
+      const items = await api.getWishlist();
+      setWishlistIds(new Set(items.map((it) => it.game_id)));
+    } catch {
+      // Ignorar si no está autenticado
+    }
+  };
+
+  useEffect(() => {
+    loadWishlistIds();
+  }, [isAuthenticated]);
 
   // Cargar catálogo de ofertas
   const fetchGames = async () => {
@@ -216,7 +238,7 @@ export const HomePage: React.FC = () => {
                     key={idx}
                     type="button"
                     onClick={() => {
-                      setMinDiscount(item.value);
+                      setMinDiscount(minDiscount === item.value ? undefined : item.value);
                       setPage(1);
                     }}
                     className={`py-1.5 text-xs font-medium rounded border transition ${
@@ -247,7 +269,7 @@ export const HomePage: React.FC = () => {
                     key={idx}
                     type="button"
                     onClick={() => {
-                      setMaxPrice(item.value);
+                      setMaxPrice(maxPrice === item.value ? undefined : item.value);
                       setPage(1);
                     }}
                     className={`py-1.5 text-xs font-medium rounded border transition ${
@@ -274,6 +296,51 @@ export const HomePage: React.FC = () => {
                 </button>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Chips de Filtros Activos */}
+        {hasActiveFilters && (
+          <div className="flex flex-wrap items-center gap-2 pt-3 mt-3 border-t border-slate-800/80 text-xs">
+            <span className="text-slate-400 font-medium">Filtros activos:</span>
+            {debouncedSearch && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-800 text-slate-200 border border-slate-700">
+                Título: "{debouncedSearch}"
+                <button onClick={() => { setSearch(''); setDebouncedSearch(''); setPage(1); }} className="hover:text-rose-400 ml-0.5">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+            {selectedStore && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-800 text-slate-200 border border-slate-700">
+                Tienda: {stores.find((s) => s.external_store_id === selectedStore)?.name || selectedStore}
+                <button onClick={() => { setSelectedStore(''); setPage(1); }} className="hover:text-rose-400 ml-0.5">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+            {minDiscount !== undefined && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-800 text-slate-200 border border-slate-700">
+                Descuento: &gt;{minDiscount}%
+                <button onClick={() => { setMinDiscount(undefined); setPage(1); }} className="hover:text-rose-400 ml-0.5">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+            {maxPrice !== undefined && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-800 text-slate-200 border border-slate-700">
+                Precio: &lt;${maxPrice}
+                <button onClick={() => { setMaxPrice(undefined); setPage(1); }} className="hover:text-rose-400 ml-0.5">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+            <button
+              onClick={resetFilters}
+              className="text-rose-400 hover:text-rose-300 font-semibold underline text-xs ml-auto"
+            >
+              Limpiar todos
+            </button>
           </div>
         )}
       </div>
@@ -309,7 +376,12 @@ export const HomePage: React.FC = () => {
       ) : games.length > 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-3 gap-6">
           {games.map((game) => (
-            <GameCard key={game.id} game={game} onWishlistToggled={fetchGames} />
+            <GameCard
+              key={game.id}
+              game={game}
+              isWishlisted={wishlistIds.has(game.id)}
+              onWishlistToggled={loadWishlistIds}
+            />
           ))}
         </div>
       ) : (

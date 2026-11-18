@@ -70,10 +70,19 @@ func TitlesMatch(titleA, titleB string) bool {
 			if diff == "" {
 				diff = strings.TrimPrefix(normB, normA)
 			}
-			// Evitar emparejar secuelas como "2", "ii", "3", etc.
-			if diff != "2" && diff != "3" && diff != "4" && diff != "ii" && diff != "iii" && diff != "iv" {
-				return true
+			// Evitar emparejar secuelas numéricas o DLCs/Upgrades con el juego base
+			unwantedSuffixes := []string{
+				"2", "3", "4", "5", "6", "7", "8", "9",
+				"ii", "iii", "iv", "v", "vi", "vii", "viii",
+				"upgrade", "soundtrack", "ost", "dlc", "seasonpass",
+				"expansion", "pack", "bundle", "vr", "demo", "prologue",
 			}
+			for _, unw := range unwantedSuffixes {
+				if diff == unw || strings.HasPrefix(diff, unw) {
+					return false
+				}
+			}
+			return true
 		}
 	}
 	return false
@@ -332,35 +341,36 @@ func (s *SyncService) IngestDeals(ctx context.Context, source string, payload mo
 	}
 
 	// 4. Auto-enriquecimiento integrado: si se solicita, consultar y agregar tiendas oficiales
-	// para los videojuegos que se acaban de insertar o actualizar
+	// para TODOS los videojuegos que se acaban de insertar o actualizar que carezcan de tiendas prioritarias
 	enrichedCount := 0
 	storesAddedTotal := 0
 	if autoEnrich && len(touchedGameIDs) > 0 {
-		limit := 25
-		count := 0
 		for _, gid := range touchedGameIDs {
-			if count >= limit {
-				break
-			}
 			var extGameID, steamAppID, title string
 			var storeCount int
+			var hasSteam, hasEpic, hasGOG, hasHumble bool
 			err := s.db.QueryRowContext(ctx, `
 				SELECT 
 					COALESCE((SELECT sp.external_game_id FROM store_products sp WHERE sp.game_id = g.id AND sp.external_game_id IS NOT NULL AND sp.external_game_id != '' LIMIT 1), ''),
 					COALESCE(g.steam_app_id, ''),
 					g.title,
-					(SELECT COUNT(DISTINCT spc.store_id) FROM store_products spc WHERE spc.game_id = g.id)
+					(SELECT COUNT(DISTINCT spc.store_id) FROM store_products spc WHERE spc.game_id = g.id),
+					EXISTS (SELECT 1 FROM store_products sp JOIN stores st ON st.id = sp.store_id WHERE sp.game_id = g.id AND st.external_store_id = '1'),
+					EXISTS (SELECT 1 FROM store_products sp JOIN stores st ON st.id = sp.store_id WHERE sp.game_id = g.id AND st.external_store_id = '25'),
+					EXISTS (SELECT 1 FROM store_products sp JOIN stores st ON st.id = sp.store_id WHERE sp.game_id = g.id AND st.external_store_id = '7'),
+					EXISTS (SELECT 1 FROM store_products sp JOIN stores st ON st.id = sp.store_id WHERE sp.game_id = g.id AND st.external_store_id = '11')
 				FROM games g
 				WHERE g.id = $1;
-			`, gid).Scan(&extGameID, &steamAppID, &title, &storeCount)
-			if err == nil && storeCount <= 2 {
+			`, gid).Scan(&extGameID, &steamAppID, &title, &storeCount, &hasSteam, &hasEpic, &hasGOG, &hasHumble)
+
+			needsEnrich := (!hasSteam || !hasEpic || !hasGOG || !hasHumble || storeCount < 4)
+			if err == nil && needsEnrich {
 				added, enrichErr := s.EnrichGameMultiStore(ctx, gid, extGameID, steamAppID, title)
 				if enrichErr == nil && added > 0 {
 					enrichedCount++
 					storesAddedTotal += added
 				}
-				count++
-				time.Sleep(80 * time.Millisecond) // Pausa de cortesía para respetar rate-limits
+				time.Sleep(50 * time.Millisecond) // Pausa de cortesía para respetar rate-limits de CheapShark
 			}
 		}
 	}
@@ -430,7 +440,67 @@ func (s *SyncService) EnrichGameMultiStore(ctx context.Context, gameID int, exte
 	client := &http.Client{Timeout: 12 * time.Second}
 	var gameLookup CheapSharkGameLookupResponse
 
-	// 1. Si tenemos externalGameID, consultar ofertas iniciales
+	// Helper para agregar ofertas evitando tiendas duplicadas
+	addDealIfMissing := func(deal CheapSharkGameLookupDeal) {
+		for _, existing := range gameLookup.Deals {
+			if existing.StoreID == deal.StoreID {
+				return
+			}
+		}
+		gameLookup.Deals = append(gameLookup.Deals, deal)
+	}
+
+	// 1. Si tenemos steamAppID, consultar el juego oficial en CheapShark
+	if steamAppID != "" {
+		reqSteam, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://www.cheapshark.com/api/1.0/games?steamAppID=%s", steamAppID), nil)
+		if reqSteam != nil {
+			reqSteam.Header.Set("User-Agent", CheapSharkUserAgent)
+			if respSteam, errS := client.Do(reqSteam); errS == nil {
+				defer respSteam.Body.Close()
+				if respSteam.StatusCode == http.StatusOK {
+					body, _ := io.ReadAll(respSteam.Body)
+					var steamResult struct {
+						GameID string `json:"gameID"`
+					}
+					var steamGameID string
+					if err := json.Unmarshal(body, &steamResult); err == nil && steamResult.GameID != "" {
+						steamGameID = steamResult.GameID
+					} else {
+						var list []struct {
+							GameID string `json:"gameID"`
+						}
+						if err := json.Unmarshal(body, &list); err == nil && len(list) > 0 {
+							steamGameID = list[0].GameID
+						}
+					}
+
+					if steamGameID != "" {
+						reqG, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://www.cheapshark.com/api/1.0/games?id=%s", steamGameID), nil)
+						if reqG != nil {
+							reqG.Header.Set("User-Agent", CheapSharkUserAgent)
+							if respG, errG := client.Do(reqG); errG == nil {
+								defer respG.Body.Close()
+								if respG.StatusCode == http.StatusOK {
+									var lookup CheapSharkGameLookupResponse
+									if errG := json.NewDecoder(respG.Body).Decode(&lookup); errG == nil {
+										for _, d := range lookup.Deals {
+											addDealIfMissing(d)
+										}
+										if gameLookup.Info.Title == "" {
+											gameLookup.Info = lookup.Info
+											gameLookup.CheapestPriceEver = lookup.CheapestPriceEver
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Si tenemos externalGameID, consultar ofertas por ese ID
 	if externalGameID != "" {
 		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://www.cheapshark.com/api/1.0/games?id=%s", externalGameID), nil)
 		if err == nil {
@@ -438,7 +508,16 @@ func (s *SyncService) EnrichGameMultiStore(ctx context.Context, gameID int, exte
 			if resp, err := client.Do(req); err == nil {
 				defer resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
-					_ = json.NewDecoder(resp.Body).Decode(&gameLookup)
+					var extLookup CheapSharkGameLookupResponse
+					if err := json.NewDecoder(resp.Body).Decode(&extLookup); err == nil {
+						for _, d := range extLookup.Deals {
+							addDealIfMissing(d)
+						}
+						if gameLookup.Info.Title == "" {
+							gameLookup.Info = extLookup.Info
+							gameLookup.CheapestPriceEver = extLookup.CheapestPriceEver
+						}
+					}
 				}
 			}
 		}
@@ -448,16 +527,54 @@ func (s *SyncService) EnrichGameMultiStore(ctx context.Context, gameID int, exte
 		steamAppID = *gameLookup.Info.SteamAppID
 	}
 
-	// 2. Verificar presencia de las 4 tiendas oficiales prioritarias:
-	// Steam (1), Epic Games Store (25), GOG (7), Humble Bundle (11)
-	missingKeyStore := !hasStore(gameLookup.Deals, "1") ||
-		!hasStore(gameLookup.Deals, "25") ||
-		!hasStore(gameLookup.Deals, "7") ||
-		!hasStore(gameLookup.Deals, "11")
+	// 3. Buscar candidatos en CheapShark por título (/games?title=)
+	if title != "" {
+		reqGames, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://www.cheapshark.com/api/1.0/games?title=%s", url.QueryEscape(title)), nil)
+		if reqGames != nil {
+			reqGames.Header.Set("User-Agent", CheapSharkUserAgent)
+			if respGames, errG := client.Do(reqGames); errG == nil {
+				defer respGames.Body.Close()
+				if respGames.StatusCode == http.StatusOK {
+					var candidates []struct {
+						GameID     string  `json:"gameID"`
+						SteamAppID *string `json:"steamAppID"`
+						External   string  `json:"external"`
+					}
+					if errG := json.NewDecoder(respGames.Body).Decode(&candidates); errG == nil {
+						for _, cand := range candidates {
+							if TitlesMatch(cand.External, title) {
+								if cand.SteamAppID != nil && *cand.SteamAppID != "" && steamAppID == "" {
+									steamAppID = *cand.SteamAppID
+								}
+								reqSub, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://www.cheapshark.com/api/1.0/games?id=%s", cand.GameID), nil)
+								if reqSub != nil {
+									reqSub.Header.Set("User-Agent", CheapSharkUserAgent)
+									if respSub, errSub := client.Do(reqSub); errSub == nil {
+										defer respSub.Body.Close()
+										if respSub.StatusCode == http.StatusOK {
+											var candLookup CheapSharkGameLookupResponse
+											if errSub := json.NewDecoder(respSub.Body).Decode(&candLookup); errSub == nil {
+												for _, cd := range candLookup.Deals {
+													addDealIfMissing(cd)
+												}
+												if gameLookup.Info.Title == "" {
+													gameLookup.Info = candLookup.Info
+													gameLookup.CheapestPriceEver = candLookup.CheapestPriceEver
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 
-	// Si falta cualquiera de las 4 tiendas clave o el juego tiene pocas tiendas en total:
-	if (missingKeyStore || len(gameLookup.Deals) <= 2) && title != "" {
-		// A. Consulta cruzada en /deals?title= (trae ofertas con o sin descuento en múltiples tiendas)
+	// 4. Consulta cruzada en /deals?title=
+	if title != "" {
 		reqDeals, errD := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://www.cheapshark.com/api/1.0/deals?title=%s", url.QueryEscape(title)), nil)
 		if errD == nil {
 			reqDeals.Header.Set("User-Agent", CheapSharkUserAgent)
@@ -468,15 +585,13 @@ func (s *SyncService) EnrichGameMultiStore(ctx context.Context, gameID int, exte
 					if errD := json.NewDecoder(respDeals.Body).Decode(&dealsFound); errD == nil {
 						for _, df := range dealsFound {
 							if TitlesMatch(df.Title, title) {
-								if !hasStore(gameLookup.Deals, df.StoreID) {
-									gameLookup.Deals = append(gameLookup.Deals, CheapSharkGameLookupDeal{
-										StoreID:     df.StoreID,
-										DealID:      df.DealID,
-										Price:       df.SalePrice,
-										RetailPrice: df.NormalPrice,
-										Savings:     df.Savings,
-									})
-								}
+								addDealIfMissing(CheapSharkGameLookupDeal{
+									StoreID:     df.StoreID,
+									DealID:      df.DealID,
+									Price:       df.SalePrice,
+									RetailPrice: df.NormalPrice,
+									Savings:     df.Savings,
+								})
 								if df.SteamAppID != "" && steamAppID == "" {
 									steamAppID = df.SteamAppID
 								}
@@ -486,168 +601,33 @@ func (s *SyncService) EnrichGameMultiStore(ctx context.Context, gameID int, exte
 				}
 			}
 		}
+	}
 
-		// B. Si Steam (1) aún no fue encontrado, buscar por steamAppID o por candidatos en /games?title=
-		if !hasStore(gameLookup.Deals, "1") {
-			// B1. Búsqueda por steamAppID
-			if steamAppID != "" {
-				reqSteam, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://www.cheapshark.com/api/1.0/games?steamAppID=%s", steamAppID), nil)
-				if reqSteam != nil {
-					reqSteam.Header.Set("User-Agent", CheapSharkUserAgent)
-					if respSteam, errS := client.Do(reqSteam); errS == nil {
-						defer respSteam.Body.Close()
-						if respSteam.StatusCode == http.StatusOK {
-							var results []struct {
-								GameID string `json:"gameID"`
-							}
-							if errS := json.NewDecoder(respSteam.Body).Decode(&results); errS == nil && len(results) > 0 {
-								steamGameID := results[0].GameID
-								reqG, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://www.cheapshark.com/api/1.0/games?id=%s", steamGameID), nil)
-								if reqG != nil {
-									reqG.Header.Set("User-Agent", CheapSharkUserAgent)
-									if respG, errG := client.Do(reqG); errG == nil {
-										defer respG.Body.Close()
-										if respG.StatusCode == http.StatusOK {
-											var steamLookup CheapSharkGameLookupResponse
-											if errG := json.NewDecoder(respG.Body).Decode(&steamLookup); errG == nil {
-												for _, sd := range steamLookup.Deals {
-													if !hasStore(gameLookup.Deals, sd.StoreID) {
-														gameLookup.Deals = append(gameLookup.Deals, sd)
-													}
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-
-			// B2. Búsqueda en catálogo de candidatos (/games?title=)
-			if !hasStore(gameLookup.Deals, "1") {
-				reqGames, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://www.cheapshark.com/api/1.0/games?title=%s", url.QueryEscape(title)), nil)
-				if reqGames != nil {
-					reqGames.Header.Set("User-Agent", CheapSharkUserAgent)
-					if respGames, errG := client.Do(reqGames); errG == nil {
-						defer respGames.Body.Close()
-						if respGames.StatusCode == http.StatusOK {
-							var candidates []struct {
-								GameID     string  `json:"gameID"`
-								SteamAppID *string `json:"steamAppID"`
-								External   string  `json:"external"`
-							}
-							if errG := json.NewDecoder(respGames.Body).Decode(&candidates); errG == nil {
-								for _, cand := range candidates {
-									if TitlesMatch(cand.External, title) {
-										if cand.SteamAppID != nil && *cand.SteamAppID != "" && steamAppID == "" {
-											steamAppID = *cand.SteamAppID
-										}
-										reqSub, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://www.cheapshark.com/api/1.0/games?id=%s", cand.GameID), nil)
-										if reqSub != nil {
-											reqSub.Header.Set("User-Agent", CheapSharkUserAgent)
-											if respSub, errSub := client.Do(reqSub); errSub == nil {
-												defer respSub.Body.Close()
-												if respSub.StatusCode == http.StatusOK {
-													var candLookup CheapSharkGameLookupResponse
-													if errSub := json.NewDecoder(respSub.Body).Decode(&candLookup); errSub == nil {
-														for _, cd := range candLookup.Deals {
-															if !hasStore(gameLookup.Deals, cd.StoreID) {
-																gameLookup.Deals = append(gameLookup.Deals, cd)
-															}
-														}
-													}
-												}
-											}
-										}
-									}
-									if hasStore(gameLookup.Deals, "1") {
-										break
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-
-		// C. Si Epic Games Store (25) falta, consultar ofertas específicas de Epic en CheapShark
-		if !hasStore(gameLookup.Deals, "25") {
-			reqEpic, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://www.cheapshark.com/api/1.0/deals?storeID=25&title=%s", url.QueryEscape(title)), nil)
-			if reqEpic != nil {
-				reqEpic.Header.Set("User-Agent", CheapSharkUserAgent)
-				if respEpic, errE := client.Do(reqEpic); errE == nil {
-					defer respEpic.Body.Close()
-					if respEpic.StatusCode == http.StatusOK {
-						var epicDeals []models.CheapSharkDeal
-						if errE := json.NewDecoder(respEpic.Body).Decode(&epicDeals); errE == nil {
-							for _, ed := range epicDeals {
-								if TitlesMatch(ed.Title, title) && !hasStore(gameLookup.Deals, "25") {
-									gameLookup.Deals = append(gameLookup.Deals, CheapSharkGameLookupDeal{
-										StoreID:     "25",
-										DealID:      ed.DealID,
-										Price:       ed.SalePrice,
-										RetailPrice: ed.NormalPrice,
-										Savings:     ed.Savings,
+	// 5. Búsqueda prioritaria obligatoria de las 4 tiendas oficiales:
+	// Steam (1), Epic Games Store (25), GOG (7), Humble Store (11)
+	keyStoresToFind := []string{"1", "25", "7", "11"}
+	for _, storeID := range keyStoresToFind {
+		if !hasStore(gameLookup.Deals, storeID) && title != "" {
+			reqStoreDeal, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://www.cheapshark.com/api/1.0/deals?storeID=%s&title=%s", storeID, url.QueryEscape(title)), nil)
+			if reqStoreDeal != nil {
+				reqStoreDeal.Header.Set("User-Agent", CheapSharkUserAgent)
+				if respStoreDeal, errSD := client.Do(reqStoreDeal); errSD == nil {
+					defer respStoreDeal.Body.Close()
+					if respStoreDeal.StatusCode == http.StatusOK {
+						var deals []models.CheapSharkDeal
+						if errSD := json.NewDecoder(respStoreDeal.Body).Decode(&deals); errSD == nil {
+							for _, d := range deals {
+								if TitlesMatch(d.Title, title) && !hasStore(gameLookup.Deals, storeID) {
+									addDealIfMissing(CheapSharkGameLookupDeal{
+										StoreID:     storeID,
+										DealID:      d.DealID,
+										Price:       d.SalePrice,
+										RetailPrice: d.NormalPrice,
+										Savings:     d.Savings,
 									})
-									break
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-
-		// D. Si GOG (7) falta, consultar ofertas específicas de GOG en CheapShark
-		if !hasStore(gameLookup.Deals, "7") {
-			reqGOG, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://www.cheapshark.com/api/1.0/deals?storeID=7&title=%s", url.QueryEscape(title)), nil)
-			if reqGOG != nil {
-				reqGOG.Header.Set("User-Agent", CheapSharkUserAgent)
-				if respGOG, errG := client.Do(reqGOG); errG == nil {
-					defer respGOG.Body.Close()
-					if respGOG.StatusCode == http.StatusOK {
-						var gogDeals []models.CheapSharkDeal
-						if errG := json.NewDecoder(respGOG.Body).Decode(&gogDeals); errG == nil {
-							for _, gd := range gogDeals {
-								if TitlesMatch(gd.Title, title) && !hasStore(gameLookup.Deals, "7") {
-									gameLookup.Deals = append(gameLookup.Deals, CheapSharkGameLookupDeal{
-										StoreID:     "7",
-										DealID:      gd.DealID,
-										Price:       gd.SalePrice,
-										RetailPrice: gd.NormalPrice,
-										Savings:     gd.Savings,
-									})
-									break
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-
-		// E. Si Humble Store (11) falta, consultar ofertas específicas de Humble en CheapShark
-		if !hasStore(gameLookup.Deals, "11") {
-			reqHumble, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://www.cheapshark.com/api/1.0/deals?storeID=11&title=%s", url.QueryEscape(title)), nil)
-			if reqHumble != nil {
-				reqHumble.Header.Set("User-Agent", CheapSharkUserAgent)
-				if respHumble, errH := client.Do(reqHumble); errH == nil {
-					defer respHumble.Body.Close()
-					if respHumble.StatusCode == http.StatusOK {
-						var humbleDeals []models.CheapSharkDeal
-						if errH := json.NewDecoder(respHumble.Body).Decode(&humbleDeals); errH == nil {
-							for _, hd := range humbleDeals {
-								if TitlesMatch(hd.Title, title) && !hasStore(gameLookup.Deals, "11") {
-									gameLookup.Deals = append(gameLookup.Deals, CheapSharkGameLookupDeal{
-										StoreID:     "11",
-										DealID:      hd.DealID,
-										Price:       hd.SalePrice,
-										RetailPrice: hd.NormalPrice,
-										Savings:     hd.Savings,
-									})
+									if d.SteamAppID != "" && steamAppID == "" {
+										steamAppID = d.SteamAppID
+									}
 									break
 								}
 							}
@@ -787,6 +767,46 @@ func (s *SyncService) EnrichGameMultiStore(ctx context.Context, gameID int, exte
 				INSERT INTO price_history (store_product_id, regular_price, sale_price, discount_percentage, recorded_at)
 				VALUES ($1, $2, $3, $4, NOW());
 			`, storeProductID, retailPrice, salePrice, savings)
+		}
+
+		// Revisar Wishlists y disparar alertas de precio si coincide el precio objetivo
+		rowsW, errW := tx.QueryContext(ctx, `
+			SELECT w.id, w.target_price
+			FROM wishlists w
+			WHERE w.game_id = $1 AND w.notify_active = true AND w.target_price >= $2;
+		`, gameID, salePrice)
+		if errW == nil {
+			type wishMatch struct {
+				wid int
+				tp  float64
+			}
+			var matches []wishMatch
+			for rowsW.Next() {
+				var m wishMatch
+				if errS := rowsW.Scan(&m.wid, &m.tp); errS == nil {
+					matches = append(matches, m)
+				}
+			}
+			rowsW.Close()
+
+			for _, m := range matches {
+				var countAlerts int
+				_ = tx.QueryRowContext(ctx, `
+					SELECT COUNT(*) FROM price_alerts 
+					WHERE wishlist_id = $1 AND store_name = $2 
+					  AND triggered_price = $3 AND triggered_at > NOW() - INTERVAL '24 hours';
+				`, m.wid, store.Name, salePrice).Scan(&countAlerts)
+
+				if countAlerts == 0 {
+					alertMsg := fmt.Sprintf("¡%s está disponible en %s por solo $%.2f (tu precio objetivo era $%.2f, -%.0f%%)!",
+						title, store.Name, salePrice, m.tp, savings)
+
+					_, _ = tx.ExecContext(ctx, `
+						INSERT INTO price_alerts (wishlist_id, store_name, triggered_price, message, is_read, triggered_at)
+						VALUES ($1, $2, $3, $4, false, NOW());
+					`, m.wid, store.Name, salePrice, alertMsg)
+				}
+			}
 		}
 
 		dealsSaved++
