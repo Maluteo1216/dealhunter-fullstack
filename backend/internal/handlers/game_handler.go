@@ -578,3 +578,56 @@ func (h *GameHandler) DeleteGame(w http.ResponseWriter, r *http.Request) {
 
 	json.NewEncoder(w).Encode(map[string]string{"message": "Juego eliminado exitosamente"})
 }
+
+// EnrichSingleGame permite forzar la búsqueda y enriquecimiento multi-tienda para un videojuego específico
+func (h *GameHandler) EnrichSingleGame(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if h.db == nil || h.syncService == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Servicio de base de datos o sincronización no disponible"})
+		return
+	}
+
+	slug := chi.URLParam(r, "slug")
+	if slug == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Slug no proporcionado"})
+		return
+	}
+
+	var gameID int
+	var title, steamAppID string
+	err := h.db.QueryRowContext(r.Context(), `
+		SELECT id, title, COALESCE(steam_app_id, '') 
+		FROM games WHERE slug = $1;
+	`, slug).Scan(&gameID, &title, &steamAppID)
+
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Videojuego no encontrado"})
+		return
+	}
+
+	var extGameID string
+	_ = h.db.QueryRowContext(r.Context(), `
+		SELECT COALESCE(external_game_id, '') FROM store_products 
+		WHERE game_id = $1 AND external_game_id IS NOT NULL AND external_game_id != '' 
+		LIMIT 1;
+	`, gameID).Scan(&extGameID)
+
+	storesAdded, err := h.syncService.EnrichGameMultiStore(r.Context(), gameID, extGameID, steamAppID, title)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Error al enriquecer juego: " + err.Error(),
+		})
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":      fmt.Sprintf("Juego enriquecido exitosamente. Se sincronizaron %d tiendas oficiales.", storesAdded),
+		"stores_added": storesAdded,
+	})
+}

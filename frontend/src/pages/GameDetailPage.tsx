@@ -17,6 +17,7 @@ import {
   Trophy,
   DollarSign,
   Info,
+  RefreshCw,
 } from 'lucide-react';
 
 export const GameDetailPage: React.FC = () => {
@@ -31,6 +32,21 @@ export const GameDetailPage: React.FC = () => {
   const [targetPrice, setTargetPrice] = useState<string>('');
   const [wishlistSuccess, setWishlistSuccess] = useState<boolean>(false);
   const [wishlistLoading, setWishlistLoading] = useState<boolean>(false);
+  const [isSearchingStores, setIsSearchingStores] = useState<boolean>(false);
+
+  const handleEnrichGame = async () => {
+    if (!slug) return;
+    setIsSearchingStores(true);
+    try {
+      await api.enrichSingleGame(slug);
+      const data = await api.getGameBySlug(slug);
+      setDetail(data);
+    } catch (err: any) {
+      alert(err.message || 'No se pudieron buscar más tiendas para este juego');
+    } finally {
+      setIsSearchingStores(false);
+    }
+  };
 
   useEffect(() => {
     if (!slug) return;
@@ -253,14 +269,35 @@ export const GameDetailPage: React.FC = () => {
 
       {/* Tabla Comparativa de Tiendas Oficiales */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
             <Globe2 className="w-5 h-5 text-brand-400" />
-            Comparativa de Precios en Tiendas Oficiales
-          </h2>
-          <span className="text-xs text-slate-400 font-medium">
-            {current_prices.length} tiendas disponibles
-          </span>
+            <h2 className="text-xl font-bold text-slate-100">
+              Comparativa de Precios en Tiendas Oficiales
+            </h2>
+            <span className="text-xs text-slate-400 font-medium">
+              ({current_prices.length} tiendas disponibles)
+            </span>
+          </div>
+
+          <button
+            onClick={handleEnrichGame}
+            disabled={isSearchingStores}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-brand-400 hover:text-brand-300 text-xs font-semibold border border-slate-700 transition disabled:opacity-50 self-start sm:self-auto"
+            title="Consulta CheapShark API en tiempo real para encontrar ofertas en otras tiendas oficiales"
+          >
+            {isSearchingStores ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Buscando tiendas en CheapShark...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="w-3.5 h-3.5" />
+                Buscar en Más Tiendas
+              </>
+            )}
+          </button>
         </div>
 
         <StoreTable

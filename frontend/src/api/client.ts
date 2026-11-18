@@ -115,6 +115,12 @@ export const api = {
     return request<GameDetail>(`/api/v1/games/${encodeURIComponent(slug)}`);
   },
 
+  enrichSingleGame: (slug: string): Promise<{ message: string; stores_added: number }> => {
+    return request<{ message: string; stores_added: number }>(`/api/v1/games/${encodeURIComponent(slug)}/enrich`, {
+      method: 'POST',
+    });
+  },
+
   // Tiendas
   getStores: (): Promise<Store[]> => {
     return request<Store[]>('/api/v1/stores');

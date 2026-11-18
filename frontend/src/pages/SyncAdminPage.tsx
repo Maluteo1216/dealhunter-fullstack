@@ -57,18 +57,18 @@ export const SyncAdminPage: React.FC = () => {
     return [];
   };
 
-  // 1. Sincronización Rápida (1 o 2 páginas de ofertas generales)
-  const handleBrowserSync = async (pagesToFetch: number = 2) => {
+  // 1. Sincronización de páginas de ofertas (permite avanzar páginas para traer juegos nuevos)
+  const handleBrowserSync = async (pagesToFetch: number = 2, startPage: number = 0) => {
     setSyncingBrowser(true);
     setSyncStatus({ type: null, message: '' });
-    setSyncProgressText('Obteniendo ofertas generales...');
+    setSyncProgressText(`Obteniendo ofertas (páginas ${startPage + 1} a ${startPage + pagesToFetch})...`);
 
     try {
       const stores = await fetchCheapSharkStores();
       const allDeals: CheapSharkDeal[] = [];
 
-      for (let page = 0; page < pagesToFetch; page++) {
-        setSyncProgressText(`Descargando página ${page + 1} de ofertas...`);
+      for (let page = startPage; page < startPage + pagesToFetch; page++) {
+        setSyncProgressText(`Descargando página ${page + 1} de CheapShark...`);
         const dealsResp = await fetch(
           `https://www.cheapshark.com/api/1.0/deals?onSale=1&pageSize=60&pageNumber=${page}`
         );
@@ -87,7 +87,7 @@ export const SyncAdminPage: React.FC = () => {
 
       setSyncStatus({
         type: 'success',
-        message: `¡Sincronización completada! Se procesaron ${result.processed} ofertas en la base de datos.`,
+        message: `¡Sincronización completada! Se procesaron ${result.processed} ofertas (páginas ${startPage + 1} a ${startPage + pagesToFetch}) en la base de datos.`,
       });
       loadLogs();
     } catch (err: any) {
@@ -302,13 +302,25 @@ export const SyncAdminPage: React.FC = () => {
               )}
             </button>
 
-            <button
-              onClick={() => handleBrowserSync(1)}
-              disabled={isBusy}
-              className="w-full py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium transition disabled:opacity-50"
-            >
-              Sincronización Rápida (60 Ofertas)
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => handleBrowserSync(1, 0)}
+                disabled={isBusy}
+                className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium transition disabled:opacity-50"
+                title="Página 1 (Ofertas destacadas #1 a #60)"
+              >
+                Pág. 1 (60 Ofertas)
+              </button>
+
+              <button
+                onClick={() => handleBrowserSync(2, 1)}
+                disabled={isBusy}
+                className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium transition disabled:opacity-50"
+                title="Descarga las ofertas #60 a #180 de CheapShark para agregar juegos totalmente nuevos"
+              >
+                +120 Juegos Nuevos
+              </button>
+            </div>
           </div>
         </div>
 

@@ -82,6 +82,7 @@ func main() {
 		// Catálogo y tiendas públicas
 		api.Get("/games", gameHandler.GetGames)
 		api.Get("/games/{slug}", gameHandler.GetGameBySlug)
+		api.Post("/games/{slug}/enrich", gameHandler.EnrichSingleGame)
 		api.Get("/stores", storeHandler.GetStores)
 
 		// Sincronización pública / administrativa

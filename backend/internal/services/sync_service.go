@@ -404,6 +404,43 @@ func (s *SyncService) EnrichGameMultiStore(ctx context.Context, gameID int, exte
 		return 0, err
 	}
 
+	// Si gameLookup retornó 1 o menos tiendas y tenemos título, consultar deals?title= para capturar ofertas cruzadas
+	if len(gameLookup.Deals) <= 1 && title != "" {
+		reqDeals, errD := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://www.cheapshark.com/api/1.0/deals?title=%s", url.QueryEscape(title)), nil)
+		if errD == nil {
+			reqDeals.Header.Set("User-Agent", CheapSharkUserAgent)
+			if respDeals, errD := client.Do(reqDeals); errD == nil {
+				defer respDeals.Body.Close()
+				if respDeals.StatusCode == http.StatusOK {
+					var dealsFound []models.CheapSharkDeal
+					if errD := json.NewDecoder(respDeals.Body).Decode(&dealsFound); errD == nil {
+						cleanSlugTarget := CleanSlug(title)
+						for _, df := range dealsFound {
+							if CleanSlug(df.Title) == cleanSlugTarget || strings.EqualFold(df.Title, title) {
+								alreadyIn := false
+								for _, existing := range gameLookup.Deals {
+									if existing.StoreID == df.StoreID {
+										alreadyIn = true
+										break
+									}
+								}
+								if !alreadyIn {
+									gameLookup.Deals = append(gameLookup.Deals, CheapSharkGameLookupDeal{
+										StoreID:     df.StoreID,
+										DealID:      df.DealID,
+										Price:       df.SalePrice,
+										RetailPrice: df.NormalPrice,
+										Savings:     df.Savings,
+									})
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	if len(gameLookup.Deals) == 0 {
 		return 0, nil
 	}
@@ -546,12 +583,17 @@ func (s *SyncService) EnrichCatalogMultiStore(ctx context.Context, maxGames int)
 		return 0, 0, fmt.Errorf("base de datos no conectada")
 	}
 
+	if maxGames <= 0 {
+		maxGames = 50
+	}
+
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT g.id, COALESCE(sp.external_game_id, ''), COALESCE(g.steam_app_id, ''), g.title
+		SELECT g.id, 
+		       COALESCE((SELECT sp.external_game_id FROM store_products sp WHERE sp.game_id = g.id AND sp.external_game_id IS NOT NULL AND sp.external_game_id != '' LIMIT 1), ''),
+		       COALESCE(g.steam_app_id, ''), 
+		       g.title
 		FROM games g
-		LEFT JOIN store_products sp ON sp.game_id = g.id
-		GROUP BY g.id, sp.external_game_id, g.steam_app_id, g.title
-		HAVING COUNT(DISTINCT sp.store_id) <= 2
+		WHERE (SELECT COUNT(DISTINCT sp.store_id) FROM store_products sp WHERE sp.game_id = g.id) <= 2
 		ORDER BY g.id DESC
 		LIMIT $1;
 	`, maxGames)
