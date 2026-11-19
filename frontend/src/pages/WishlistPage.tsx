@@ -230,13 +230,21 @@ export const WishlistPage: React.FC = () => {
               >
                 <div>
                   {/* Imagen y Estado */}
-                  <div className="relative aspect-[16/9] bg-slate-950 overflow-hidden">
+                  <div className="relative aspect-[16/9] bg-slate-950 overflow-hidden flex items-center justify-center">
                     {item.game_cover ? (
-                      <img
-                        src={item.game_cover}
-                        alt={item.game_title}
-                        className="w-full h-full object-cover"
-                      />
+                      <>
+                        <img
+                          src={item.game_cover}
+                          alt=""
+                          aria-hidden="true"
+                          className="absolute inset-0 w-full h-full object-cover blur-md opacity-25 scale-125 pointer-events-none select-none"
+                        />
+                        <img
+                          src={item.game_cover}
+                          alt={item.game_title}
+                          className="relative z-0 max-w-full max-h-full object-contain p-1.5 drop-shadow select-none"
+                        />
+                      </>
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-slate-600 text-xs font-bold">
                         {item.game_title}

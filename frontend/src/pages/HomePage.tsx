@@ -13,7 +13,6 @@ import {
   DollarSign,
   Store as StoreIcon,
   RotateCcw,
-  Sparkles,
   X,
 } from 'lucide-react';
 
@@ -126,10 +125,6 @@ export const HomePage: React.FC = () => {
       <div className="relative rounded-2xl bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 border border-slate-800 p-6 md:p-10 mb-8 overflow-hidden shadow-xl">
         <div className="absolute -right-12 -top-12 w-64 h-64 bg-brand-500/10 rounded-full blur-3xl pointer-events-none" />
         <div className="max-w-2xl relative z-10">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-500/10 border border-brand-500/20 text-brand-300 text-xs font-semibold mb-4">
-            <Sparkles className="w-3.5 h-3.5" />
-            Monitoreo en Tiempo Real vía CheapShark API
-          </div>
           <h1 className="text-3xl md:text-5xl font-extrabold text-white tracking-tight leading-tight">
             Encuentra las mejores ofertas de videojuegos.
           </h1>

@@ -55,15 +55,25 @@ export const GameCard: React.FC<GameCardProps> = ({ game, isWishlisted = false, 
   return (
     <div className="group bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl overflow-hidden transition-all duration-300 hover:shadow-xl hover:shadow-black/50 flex flex-col">
       {/* Cover Image Container */}
-      <Link to={`/game/${game.slug}`} className="relative aspect-[16/9] overflow-hidden bg-slate-950 block">
+      <Link to={`/game/${game.slug}`} className="relative aspect-[16/9] overflow-hidden bg-slate-950 flex items-center justify-center block group">
         {game.cover_image_url && !imageError ? (
-          <img
-            src={game.cover_image_url}
-            alt={game.title}
-            onError={() => setImageError(true)}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-            loading="lazy"
-          />
+          <>
+            {/* Fondo ambiental desenfocado con los tonos de la carátula */}
+            <img
+              src={game.cover_image_url}
+              alt=""
+              aria-hidden="true"
+              className="absolute inset-0 w-full h-full object-cover blur-md opacity-25 scale-125 pointer-events-none select-none"
+            />
+            {/* Portada íntegra y nítida sin recortes ni zoom forzado */}
+            <img
+              src={game.cover_image_url}
+              alt={game.title}
+              onError={() => setImageError(true)}
+              className="relative z-0 max-w-full max-h-full object-contain p-1.5 group-hover:scale-105 transition-transform duration-300 drop-shadow select-none"
+              loading="lazy"
+            />
+          </>
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center p-4 bg-gradient-to-br from-slate-900 to-slate-950 text-slate-500">
             <Flame className="w-10 h-10 mb-2 text-slate-700" />

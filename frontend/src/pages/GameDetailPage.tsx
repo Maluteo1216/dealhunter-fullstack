@@ -184,15 +184,25 @@ export const GameDetailPage: React.FC = () => {
       {/* Cabecera Principal del Videojuego */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 md:p-8 flex flex-col lg:flex-row gap-8 items-start shadow-xl">
         {/* Portada */}
-        <div className="w-full lg:w-96 aspect-[16/9] lg:aspect-[4/3] rounded-xl overflow-hidden bg-slate-950 border border-slate-800 shrink-0 relative group">
+        <div className="w-full lg:w-96 aspect-[16/9] rounded-xl overflow-hidden bg-slate-950 border border-slate-800 shrink-0 relative flex items-center justify-center group shadow-inner">
           {game.cover_image_url ? (
-            <img
-              src={game.cover_image_url}
-              alt={game.title}
-              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-            />
+            <>
+              {/* Fondo ambiental desenfocado con los tonos de la carátula */}
+              <img
+                src={game.cover_image_url}
+                alt=""
+                aria-hidden="true"
+                className="absolute inset-0 w-full h-full object-cover blur-xl opacity-30 scale-125 pointer-events-none select-none"
+              />
+              {/* Portada íntegra y nítida sin recortes ni zoom forzado */}
+              <img
+                src={game.cover_image_url}
+                alt={game.title}
+                className="relative z-0 max-w-full max-h-full object-contain p-2.5 group-hover:scale-105 transition-transform duration-300 drop-shadow-lg select-none"
+              />
+            </>
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-slate-600 font-bold">
+            <div className="w-full h-full flex items-center justify-center text-slate-600 font-bold p-4 text-center">
               {game.title}
             </div>
           )}
