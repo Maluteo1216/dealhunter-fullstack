@@ -8,20 +8,29 @@ export default {
     extend: {
       colors: {
         brand: {
-          50: '#f0fdf4',
-          100: '#dcfce7',
-          200: '#bbf7d0',
-          300: '#86efac',
-          400: '#4ade80',
-          500: '#22c55e',
-          600: '#16a34a',
-          700: '#15803d',
-          800: '#166534',
-          900: '#14532d',
+          50: '#f5f7ff',
+          100: '#ede9fe',
+          200: '#ddd6fe',
+          300: '#c4b5fd',
+          400: '#a5b4fc', // pastel periwinkle
+          500: '#818cf8', // soft pastel indigo
+          600: '#6366f1', // balanced primary indigo
+          700: '#4f46e5',
+          800: '#4338ca',
+          900: '#312e81',
+          950: '#1e1b4b',
+        },
+        pastel: {
+          indigo: '#a5b4fc',
+          mint: '#6ee7b7',
+          rose: '#fda4af',
+          amber: '#fde047',
+          sky: '#93c5fd',
         },
         slate: {
-          850: '#151f32',
-          950: '#070b14',
+          850: '#141c2c',
+          900: '#0e1524',
+          950: '#080d1a',
         }
       }
     },

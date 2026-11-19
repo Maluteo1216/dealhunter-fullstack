@@ -142,7 +142,7 @@ export const GameDetailPage: React.FC = () => {
   if (loading) {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center">
-        <Loader2 className="w-10 h-10 animate-spin text-brand-400 mb-3" />
+        <Loader2 className="w-10 h-10 animate-spin text-brand-300 mb-3" />
         <p className="text-slate-400 font-medium text-sm">Cargando precios y comparativa...</p>
       </div>
     );
@@ -250,13 +250,13 @@ export const GameDetailPage: React.FC = () => {
             <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 max-w-lg">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
-                  <Bell className="w-4 h-4 text-brand-400" />
+                  <Bell className="w-4 h-4 text-brand-300" />
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
                     Configurar Alerta de Precio (Wishlist)
                   </h4>
                 </div>
                 {existingWishlist && (
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
                     En tu Wishlist (${existingWishlist.target_price.toFixed(2)})
                   </span>
                 )}
@@ -281,7 +281,7 @@ export const GameDetailPage: React.FC = () => {
                 <button
                   type="submit"
                   disabled={wishlistLoading}
-                  className="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-brand-600/20 disabled:opacity-50"
+                  className="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shadow-md shadow-brand-600/20 disabled:opacity-50"
                 >
                   <Heart className="w-3.5 h-3.5 fill-current" />
                   {wishlistLoading ? 'Guardando...' : existingWishlist ? 'Actualizar Alerta' : 'Guardar Alerta'}
@@ -291,7 +291,7 @@ export const GameDetailPage: React.FC = () => {
                     type="button"
                     onClick={handleRemoveWishlist}
                     disabled={wishlistLoading}
-                    className="p-2 rounded-lg bg-rose-950/40 hover:bg-rose-900 text-rose-400 border border-rose-800 transition"
+                    className="p-2 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/80 transition"
                     title="Remover de mi lista de deseos"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -300,7 +300,7 @@ export const GameDetailPage: React.FC = () => {
               </form>
 
               {wishlistSuccess && (
-                <div className="mt-2 text-xs text-brand-400 font-medium flex items-center gap-1.5 animate-fadeIn">
+                <div className="mt-2 text-xs text-emerald-300 font-medium flex items-center gap-1.5 animate-fadeIn">
                   <CheckCircle className="w-3.5 h-3.5" />
                   ¡Alerta guardada! Te avisaremos si el precio cumple tu objetivo.
                 </div>
@@ -311,13 +311,13 @@ export const GameDetailPage: React.FC = () => {
       </div>
 
       {/* Nota Informativa de Precios Regionales Obligatoria */}
-      <div className="bg-sky-950/40 border border-sky-800/50 rounded-xl p-4 text-sky-200 text-xs flex items-start gap-3">
-        <Info className="w-5 h-5 text-sky-400 shrink-0 mt-0.5" />
+      <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 text-slate-300 text-xs flex items-start gap-3">
+        <Info className="w-5 h-5 text-brand-300 shrink-0 mt-0.5" />
         <div className="space-y-1">
-          <strong className="font-semibold text-sky-300">
+          <strong className="font-semibold text-slate-200">
             Aviso de Precios y Ajuste Regional (US MSRP):
           </strong>
-          <p className="text-sky-200/90 leading-relaxed">
+          <p className="text-slate-400 leading-relaxed">
             Los precios y descuentos mostrados están expresados en <strong>Dólares Estadounidenses (US MSRP)</strong> provistos por CheapShark API. Al hacer clic en <em>"Ir a la oferta"</em> y acceder a la tienda oficial desde tu país (por ejemplo, en Latinoamérica), la tienda puede aplicar automáticamente su tasa de precio regional, manteniendo o mejorando el porcentaje de descuento indicado.
           </p>
         </div>
@@ -327,7 +327,7 @@ export const GameDetailPage: React.FC = () => {
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <Globe2 className="w-5 h-5 text-brand-400" />
+            <Globe2 className="w-5 h-5 text-brand-300" />
             <h2 className="text-xl font-bold text-slate-100">
               Comparativa de Precios en Tiendas Oficiales
             </h2>
@@ -339,7 +339,7 @@ export const GameDetailPage: React.FC = () => {
           <button
             onClick={handleEnrichGame}
             disabled={isSearchingStores}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-brand-400 hover:text-brand-300 text-xs font-semibold border border-slate-700 transition disabled:opacity-50 self-start sm:self-auto"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-brand-300 hover:text-white text-xs font-semibold border border-slate-700 transition disabled:opacity-50 self-start sm:self-auto"
             title="Consulta CheapShark API en tiempo real para encontrar ofertas en otras tiendas oficiales"
           >
             {isSearchingStores ? (

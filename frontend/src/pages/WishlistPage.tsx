@@ -245,7 +245,7 @@ export const WishlistPage: React.FC = () => {
 
                     <div className="absolute top-2.5 left-2.5">
                       {hasMetTarget ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-500 text-slate-950 font-bold text-xs shadow-lg">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold text-xs backdrop-blur-sm">
                           <CheckCircle className="w-3.5 h-3.5" />
                           ¡Objetivo Cumplido!
                         </span>

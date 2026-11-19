@@ -52,7 +52,7 @@ export const AuthPage: React.FC = () => {
       <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl space-y-6">
         {/* Brand Header */}
         <div className="text-center space-y-2">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-brand-600 to-emerald-400 flex items-center justify-center mx-auto shadow-lg shadow-brand-500/20">
+          <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-brand-600 via-indigo-500 to-violet-400 flex items-center justify-center mx-auto shadow-md shadow-brand-500/20">
             <Flame className="w-6 h-6 text-white" />
           </div>
           <h1 className="text-2xl font-extrabold text-white">

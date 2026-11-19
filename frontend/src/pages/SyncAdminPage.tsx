@@ -135,7 +135,7 @@ export const SyncAdminPage: React.FC = () => {
       {/* Header */}
       <div>
         <h1 className="text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
-          <RefreshCw className="w-8 h-8 text-brand-400" />
+          <RefreshCw className="w-8 h-8 text-brand-300" />
           Centro de Sincronización Aleatoria
         </h1>
         <p className="text-sm text-slate-400 mt-1">
@@ -148,14 +148,14 @@ export const SyncAdminPage: React.FC = () => {
         <div
           className={`p-4 rounded-xl border flex items-start gap-3 transition ${
             syncStatus.type === 'success'
-              ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-200'
-              : 'bg-rose-950/40 border-rose-500/50 text-rose-200'
+              ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
+              : 'bg-rose-950/40 border-rose-500/40 text-rose-200'
           }`}
         >
           {syncStatus.type === 'success' ? (
-            <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+            <CheckCircle className="w-5 h-5 text-emerald-300 shrink-0 mt-0.5" />
           ) : (
-            <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+            <AlertTriangle className="w-5 h-5 text-rose-300 shrink-0 mt-0.5" />
           )}
           <div className="text-sm">
             <span className="font-semibold block">
@@ -169,18 +169,18 @@ export const SyncAdminPage: React.FC = () => {
       {/* Indicador de Progreso en Vivo */}
       {syncProgressText && (
         <div className="bg-brand-950/30 border border-brand-500/40 text-brand-300 p-3 rounded-xl flex items-center gap-2 text-xs font-medium animate-pulse">
-          <Loader2 className="w-4 h-4 animate-spin text-brand-400 shrink-0" />
+          <Loader2 className="w-4 h-4 animate-spin text-brand-300 shrink-0" />
           <span>{syncProgressText}</span>
         </div>
       )}
 
       {/* Tarjeta Principal: Descubrimiento Aleatorio Auto-Enriquecido */}
-      <div className="bg-gradient-to-r from-purple-950/40 via-slate-900 to-brand-950/40 border border-purple-500/40 rounded-2xl p-6 sm:p-8 relative overflow-hidden shadow-2xl">
+      <div className="bg-gradient-to-r from-indigo-950/40 via-slate-900 to-slate-900 border border-indigo-500/30 rounded-2xl p-6 sm:p-8 relative overflow-hidden shadow-xl">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           <div className="space-y-3 max-w-2xl">
             <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 shadow-sm">
-                <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 shadow-sm">
+                <Sparkles className="w-3.5 h-3.5 text-indigo-300" />
                 Sincronización Exclusiva y Auto-Enriquecida
               </span>
               <span className="text-xs text-slate-400 hidden sm:inline">
@@ -188,8 +188,8 @@ export const SyncAdminPage: React.FC = () => {
               </span>
             </div>
 
-            <h2 className="text-2xl font-black text-white tracking-tight flex items-center gap-2">
-              <Shuffle className="w-6 h-6 text-purple-400" />
+            <h2 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
+              <Shuffle className="w-6 h-6 text-indigo-300" />
               Descubrimiento Aleatorio con Pre-Enriquecimiento
             </h2>
 
@@ -202,7 +202,7 @@ export const SyncAdminPage: React.FC = () => {
             <button
               onClick={handleRandomSync}
               disabled={isBusy}
-              className="py-3 px-5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl font-bold text-xs sm:text-sm transition flex items-center justify-center gap-2 shadow-lg shadow-purple-600/30 disabled:opacity-50"
+              className="py-3 px-5 bg-brand-600 hover:bg-brand-500 text-white rounded-xl font-semibold text-xs sm:text-sm transition flex items-center justify-center gap-2 shadow-md shadow-brand-600/20 disabled:opacity-50"
             >
               {syncingRandom ? (
                 <>
@@ -220,16 +220,16 @@ export const SyncAdminPage: React.FC = () => {
             <button
               onClick={handleRandomServerSync}
               disabled={isBusy}
-              className="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-purple-200 border border-purple-500/30 rounded-xl font-semibold text-xs transition flex items-center justify-center gap-2 disabled:opacity-50"
+              className="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl font-medium text-xs transition flex items-center justify-center gap-2 disabled:opacity-50"
             >
               {syncingRandomServer ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
+                  <Loader2 className="w-4 h-4 animate-spin text-brand-300" />
                   Servidor Go en Proceso...
                 </>
               ) : (
                 <>
-                  <Server className="w-3.5 h-3.5 text-purple-400" />
+                  <Server className="w-3.5 h-3.5 text-brand-300" />
                   Ejecutar Aleatorio en Backend Go
                 </>
               )}
@@ -242,12 +242,12 @@ export const SyncAdminPage: React.FC = () => {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold text-white flex items-center gap-2">
-            <History className="w-5 h-5 text-brand-400" />
+            <History className="w-5 h-5 text-brand-300" />
             Registro de Auditoría de Sincronizaciones (`sync_logs`)
           </h2>
           <button
             onClick={loadLogs}
-            className="text-xs text-brand-400 hover:underline flex items-center gap-1"
+            className="text-xs text-brand-300 hover:underline flex items-center gap-1"
           >
             <RefreshCw className="w-3 h-3" /> Actualizar
           </button>
@@ -296,8 +296,8 @@ export const SyncAdminPage: React.FC = () => {
                       <span
                         className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
                           log.status === 'success'
-                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                            : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
                         }`}
                       >
                         {log.status}

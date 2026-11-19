@@ -44,7 +44,7 @@ export const StoreTable: React.FC<StoreTableProps> = ({ prices, historicalLowPri
               <tr
                 key={item.store_product_id}
                 className={`hover:bg-slate-800/40 transition ${
-                  isBestDeal ? 'bg-brand-950/20' : ''
+                  isBestDeal ? 'bg-brand-500/5' : ''
                 }`}
               >
                 {/* Store Name and Logo */}
@@ -69,7 +69,7 @@ export const StoreTable: React.FC<StoreTableProps> = ({ prices, historicalLowPri
                         {item.store_name}
                       </span>
                       {isBestDeal && (
-                        <span className="text-[11px] font-medium text-brand-400">
+                        <span className="text-[11px] font-medium text-brand-300">
                           Mejor precio actual
                         </span>
                       )}
@@ -80,7 +80,7 @@ export const StoreTable: React.FC<StoreTableProps> = ({ prices, historicalLowPri
                 {/* Discount */}
                 <td className="py-3.5 px-4 text-center">
                   {item.discount_percentage > 0 ? (
-                    <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-bold bg-brand-500/20 text-brand-400 border border-brand-500/30">
+                    <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
                       -{Math.round(item.discount_percentage)}%
                     </span>
                   ) : (
@@ -104,15 +104,15 @@ export const StoreTable: React.FC<StoreTableProps> = ({ prices, historicalLowPri
                 {/* Status Badges */}
                 <td className="py-3.5 px-4 text-center">
                   {isHistoric ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30">
                       <Check className="w-3 h-3" /> Mínimo histórico
                     </span>
                   ) : item.is_on_sale ? (
-                    <span className="inline-block px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    <span className="inline-block px-2.5 py-0.5 rounded text-[11px] font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
                       En oferta
                     </span>
                   ) : (
-                    <span className="inline-block px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 text-slate-400">
+                    <span className="inline-block px-2.5 py-0.5 rounded text-[11px] font-medium bg-slate-800 text-slate-400">
                       Precio estándar
                     </span>
                   )}

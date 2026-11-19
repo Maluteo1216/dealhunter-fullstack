@@ -53,7 +53,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, isWishlisted = false, 
   };
 
   return (
-    <div className="group bg-slate-900 border border-slate-800 hover:border-brand-500/50 rounded-xl overflow-hidden transition-all duration-300 hover:shadow-xl hover:shadow-brand-500/10 flex flex-col">
+    <div className="group bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl overflow-hidden transition-all duration-300 hover:shadow-xl hover:shadow-black/50 flex flex-col">
       {/* Cover Image Container */}
       <Link to={`/game/${game.slug}`} className="relative aspect-[16/9] overflow-hidden bg-slate-950 block">
         {game.cover_image_url && !imageError ? (
@@ -74,13 +74,13 @@ export const GameCard: React.FC<GameCardProps> = ({ game, isWishlisted = false, 
         {/* Badges Overlay */}
         <div className="absolute top-2.5 left-2.5 flex flex-col gap-1.5 z-10">
           {bestDeal && bestDeal.discount_percentage > 0 && (
-            <span className="px-2 py-0.5 rounded-md text-xs font-bold bg-brand-500 text-slate-950 shadow-md">
+            <span className="px-2 py-0.5 rounded-md text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 backdrop-blur-sm">
               -{Math.round(bestDeal.discount_percentage)}%
             </span>
           )}
 
           {isHistoricalLow && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-amber-500/90 text-slate-950 backdrop-blur-sm shadow-md">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30 backdrop-blur-sm">
               <Trophy className="w-3 h-3" />
               Mínimo Histórico
             </span>
@@ -93,17 +93,17 @@ export const GameCard: React.FC<GameCardProps> = ({ game, isWishlisted = false, 
           disabled={isWishlisting}
           className={`absolute top-2.5 right-2.5 p-1.5 rounded-lg backdrop-blur-md transition z-10 ${
             effectiveWishlisted
-              ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/40'
-              : 'bg-slate-950/60 text-slate-300 hover:text-rose-400 hover:bg-slate-950/80'
+              ? 'bg-rose-500/25 text-rose-300 border border-rose-500/40 shadow-sm'
+              : 'bg-slate-950/70 text-slate-400 hover:text-rose-300 hover:bg-slate-900 border border-slate-800'
           }`}
           title={effectiveWishlisted ? "Remover de Wishlist" : "Guardar en Wishlist"}
         >
-          <Heart className={`w-4 h-4 ${effectiveWishlisted ? 'fill-current text-white' : ''}`} />
+          <Heart className={`w-4 h-4 ${effectiveWishlisted ? 'fill-current text-rose-400' : ''}`} />
         </button>
 
         {/* Store Badge */}
         {bestDeal && (
-          <div className="absolute bottom-2 left-2.5 flex items-center gap-1.5 px-2 py-1 bg-slate-950/85 backdrop-blur-sm rounded-md border border-slate-700/50 text-[11px] text-slate-200">
+          <div className="absolute bottom-2 left-2.5 flex items-center gap-1.5 px-2 py-1 bg-slate-950/90 backdrop-blur-sm rounded-md border border-slate-800 text-[11px] text-slate-300">
             {bestDeal.store_logo && (
               <img
                 src={bestDeal.store_logo}
@@ -114,7 +114,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, isWishlisted = false, 
             )}
             <span className="font-medium truncate max-w-[100px]">{bestDeal.store_name}</span>
             {game.stores_count && game.stores_count > 1 && (
-              <span className="text-[10px] text-brand-400 font-bold ml-1 bg-brand-950/60 px-1.5 py-0.5 rounded border border-brand-500/30">
+              <span className="text-[10px] text-brand-300 font-semibold ml-1 bg-brand-500/15 px-1.5 py-0.5 rounded border border-brand-500/25">
                 +{game.stores_count - 1} tiendas
               </span>
             )}
@@ -127,7 +127,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, isWishlisted = false, 
         <div>
           <Link
             to={`/game/${game.slug}`}
-            className="text-base font-semibold text-slate-100 hover:text-brand-400 line-clamp-1 transition"
+            className="text-base font-semibold text-slate-100 hover:text-brand-300 line-clamp-1 transition"
             title={game.title}
           >
             {game.title}
@@ -142,7 +142,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, isWishlisted = false, 
           <div>
             {bestDeal ? (
               <div className="flex items-baseline gap-2">
-                <span className="text-xl font-bold text-brand-400">
+                <span className="text-xl font-bold text-brand-300">
                   ${bestDeal.current_price.toFixed(2)}
                 </span>
                 {bestDeal.regular_price > bestDeal.current_price && (
@@ -163,7 +163,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, isWishlisted = false, 
                 href={bestDeal.product_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="p-2 text-slate-400 hover:text-brand-400 hover:bg-slate-800 rounded-lg transition"
+                className="p-2 text-slate-400 hover:text-brand-300 hover:bg-slate-800 rounded-lg transition"
                 title="Ir a la tienda oficial"
               >
                 <ExternalLink className="w-4 h-4" />
@@ -171,7 +171,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, isWishlisted = false, 
             )}
             <Link
               to={`/game/${game.slug}`}
-              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-brand-600 hover:text-white text-xs font-medium text-slate-200 transition"
+              className="px-3 py-1.5 rounded-lg bg-slate-800/80 hover:bg-brand-600 hover:text-white text-xs font-medium text-slate-200 border border-slate-700/60 transition"
             >
               {game.stores_count && game.stores_count > 1 ? `Ver ${game.stores_count} tiendas` : 'Ver tiendas'}
             </Link>

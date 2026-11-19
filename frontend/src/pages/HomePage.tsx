@@ -123,10 +123,10 @@ export const HomePage: React.FC = () => {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Hero Header */}
-      <div className="relative rounded-2xl bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 border border-slate-800 p-6 md:p-10 mb-8 overflow-hidden shadow-2xl">
+      <div className="relative rounded-2xl bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 border border-slate-800 p-6 md:p-10 mb-8 overflow-hidden shadow-xl">
         <div className="absolute -right-12 -top-12 w-64 h-64 bg-brand-500/10 rounded-full blur-3xl pointer-events-none" />
         <div className="max-w-2xl relative z-10">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-500/10 border border-brand-500/20 text-brand-400 text-xs font-semibold mb-4">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-500/10 border border-brand-500/20 text-brand-300 text-xs font-semibold mb-4">
             <Sparkles className="w-3.5 h-3.5" />
             Monitoreo en Tiempo Real vía CheapShark API
           </div>
@@ -134,7 +134,7 @@ export const HomePage: React.FC = () => {
             Encuentra las mejores ofertas de videojuegos.
           </h1>
           <p className="mt-3 text-base text-slate-300">
-            Compara precios entre Steam, Epic Games, GOG, Fanatical y más. Registra alertas y no vuelvas a pagar de más.
+            Compara precios entre Steam, Epic Games, GOG, Humble Store y más. Registra alertas y no vuelvas a pagar de más.
           </p>
         </div>
       </div>
@@ -203,7 +203,7 @@ export const HomePage: React.FC = () => {
             {/* Filtro de Tienda */}
             <div>
               <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
-                <StoreIcon className="w-3.5 h-3.5 text-brand-400" /> Tienda Digital
+                <StoreIcon className="w-3.5 h-3.5 text-brand-300" /> Tienda Digital
               </label>
               <select
                 value={selectedStore}
@@ -225,7 +225,7 @@ export const HomePage: React.FC = () => {
             {/* Filtro de Descuento Mínimo */}
             <div>
               <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
-                <Percent className="w-3.5 h-3.5 text-brand-400" /> Descuento Mínimo
+                <Percent className="w-3.5 h-3.5 text-brand-300" /> Descuento Mínimo
               </label>
               <div className="grid grid-cols-4 gap-1.5">
                 {[
@@ -348,7 +348,7 @@ export const HomePage: React.FC = () => {
       {/* Resultados y Conteo */}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-bold text-slate-200 flex items-center gap-2">
-          <Flame className="w-5 h-5 text-brand-400" />
+          <Flame className="w-5 h-5 text-brand-300" />
           Ofertas Destacadas
           <span className="text-xs font-normal text-slate-400">
             ({total} títulos encontrados)

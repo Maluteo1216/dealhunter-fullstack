@@ -80,9 +80,10 @@ El proyecto **DEBE** permanecer dividido en **3 carpetas independientes**, cada 
         │   ├── AuthContext.tsx  # Estado global de sesión de usuario y logout
         │   └── ServerStatusContext.tsx # Detección y sondeo del cold start de Render
         ├── /components
-        │   ├── Navbar.tsx       # Barra de navegación con contador de alertas
+        │   ├── Sidebar.tsx      # Barra lateral fija con logo, navegación, estado y perfil (con drawer móvil)
+        │   ├── Navbar.tsx       # Re-export retrocompatible hacia Sidebar
         │   ├── ServerWakeBanner.tsx # Banner discreto cuando Render despierta del reposo
-        │   ├── GameCard.tsx     # Tarjeta de juego con ofertas, insignias y wishlist interactiva
+        │   ├── GameCard.tsx     # Tarjeta de juego con ofertas, insignias pastel y wishlist interactiva
         │   ├── StoreTable.tsx   # Tabla comparativa multi-tienda ordenada por precio
         │   └── GoogleLoginButton.tsx # Botón oficial de Google Identity Services
         └── /pages
