@@ -13,8 +13,9 @@ import (
 type contextKey string
 
 const (
-	UserIDKey    contextKey = "user_id"
-	UserEmailKey contextKey = "user_email"
+	UserIDKey      contextKey = "user_id"
+	UserEmailKey   contextKey = "user_email"
+	UserIsAdminKey contextKey = "user_is_admin"
 )
 
 // CorsMiddleware configura los encabezados CORS para permitir comunicación desde el frontend
@@ -77,11 +78,34 @@ func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
 			}
 
 			userEmail, _ := claims["email"].(string)
+			isAdmin, _ := claims["is_admin"].(bool)
 
 			ctx := context.WithValue(r.Context(), UserIDKey, userID)
 			ctx = context.WithValue(ctx, UserEmailKey, userEmail)
+			ctx = context.WithValue(ctx, UserIsAdminKey, isAdmin)
 
 			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// RequireAdminMiddleware verifica que el usuario autenticado tenga rol de administrador o correo autorizado
+func RequireAdminMiddleware(adminEmail string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			isAdmin, _ := r.Context().Value(UserIsAdminKey).(bool)
+			userEmail, _ := r.Context().Value(UserEmailKey).(string)
+
+			// Si tiene el flag is_admin o coincide con el ADMIN_EMAIL configurado
+			isAuthorized := isAdmin || (adminEmail != "" && userEmail != "" && strings.EqualFold(userEmail, adminEmail))
+			if !isAuthorized {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				w.Write([]byte(`{"error": "Acceso restringido: Se requieren privilegios de Administrador para acceder a esta sección"}`))
+				return
+			}
+
+			next.ServeHTTP(w, r)
 		})
 	}
 }

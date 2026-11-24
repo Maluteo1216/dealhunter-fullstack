@@ -3,6 +3,7 @@ package config
 import (
 	"log"
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -12,6 +13,7 @@ type Config struct {
 	DatabaseURL    string
 	JWTSecret      string
 	GoogleClientID string
+	AdminEmail     string
 }
 
 func LoadConfig() *Config {
@@ -32,11 +34,13 @@ func LoadConfig() *Config {
 
 	dbURL := os.Getenv("DATABASE_URL")
 	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
+	adminEmail := strings.ToLower(strings.TrimSpace(os.Getenv("ADMIN_EMAIL")))
 
 	return &Config{
 		Port:           port,
 		DatabaseURL:    dbURL,
 		JWTSecret:      jwtSecret,
 		GoogleClientID: googleClientID,
+		AdminEmail:     adminEmail,
 	}
 }

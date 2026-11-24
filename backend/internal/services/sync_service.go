@@ -1089,3 +1089,174 @@ func (s *SyncService) FetchRandomFromServer(ctx context.Context) (*RandomSyncRes
 		SortBy:         selectedSort,
 	}, nil
 }
+
+// FetchRandomBatchFromServer ejecuta múltiples páginas de descubrimiento aleatorio (ej. 300 ofertas)
+func (s *SyncService) FetchRandomBatchFromServer(ctx context.Context, totalDeals int) (*RandomSyncResult, error) {
+	if totalDeals <= 0 {
+		totalDeals = 60
+	}
+	pagesToFetch := (totalDeals + 59) / 60
+	if pagesToFetch > 10 {
+		pagesToFetch = 10
+	}
+
+	totalProcessed := 0
+	totalEnriched := 0
+	var lastPage int
+	var lastSort string
+
+	for i := 0; i < pagesToFetch; i++ {
+		res, err := s.FetchRandomFromServer(ctx)
+		if err != nil {
+			if totalProcessed > 0 {
+				break
+			}
+			return nil, err
+		}
+		totalProcessed += res.DealsProcessed
+		totalEnriched += res.EnrichedGames
+		lastPage = res.PageNumber
+		lastSort = res.SortBy
+	}
+
+	return &RandomSyncResult{
+		DealsProcessed: totalProcessed,
+		EnrichedGames:  totalEnriched,
+		PageNumber:     lastPage,
+		SortBy:         lastSort,
+	}, nil
+}
+
+// RefreshAndCleanupDeals consulta CheapShark para actualizar precios vigentes y marcar ofertas expiradas
+func (s *SyncService) RefreshAndCleanupDeals(ctx context.Context, limit int) (int, int, error) {
+	if s.db == nil {
+		return 0, 0, fmt.Errorf("base de datos no disponible")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+
+	// 1. Obtener store_products con ofertas marcadas como activas o con descuentos para revalidar
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT sp.id, sp.external_deal_id, cp.regular_price, cp.current_price, cp.is_on_sale
+		FROM store_products sp
+		JOIN current_prices cp ON cp.store_product_id = sp.id
+		WHERE cp.is_on_sale = true OR cp.last_updated < NOW() - INTERVAL '24 hours'
+		ORDER BY cp.last_updated ASC
+		LIMIT $1;
+	`, limit)
+	if err != nil {
+		return 0, 0, fmt.Errorf("error al consultar ofertas a revalidar: %w", err)
+	}
+	defer rows.Close()
+
+	type dealItem struct {
+		spID         int
+		dealID       string
+		regularPrice float64
+		currentPrice float64
+		isOnSale     bool
+	}
+
+	var items []dealItem
+	for rows.Next() {
+		var it dealItem
+		if err := rows.Scan(&it.spID, &it.dealID, &it.regularPrice, &it.currentPrice, &it.isOnSale); err == nil {
+			items = append(items, it)
+		}
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	updatedCount := 0
+	deactivatedCount := 0
+
+	for _, it := range items {
+		select {
+		case <-ctx.Done():
+			return updatedCount, deactivatedCount, ctx.Err()
+		default:
+		}
+
+		dealReqURL := fmt.Sprintf("https://www.cheapshark.com/api/1.0/deals?id=%s", url.QueryEscape(it.dealID))
+		req, err := http.NewRequestWithContext(ctx, "GET", dealReqURL, nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("User-Agent", CheapSharkUserAgent)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+
+		if resp.StatusCode == http.StatusNotFound {
+			// Oferta ya no existe en CheapShark -> Marcar oferta como finalizada
+			resp.Body.Close()
+			_, _ = s.db.ExecContext(ctx, `
+				UPDATE current_prices
+				SET is_on_sale = false, current_price = regular_price, discount_percentage = 0.00, last_updated = NOW()
+				WHERE store_product_id = $1;
+			`, it.spID)
+			deactivatedCount++
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			continue
+		}
+
+		var dealLookup struct {
+			GameInfo struct {
+				SalePrice   string `json:"salePrice"`
+				RetailPrice string `json:"retailPrice"`
+				Name        string `json:"name"`
+			} `json:"gameInfo"`
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&dealLookup); err != nil {
+			resp.Body.Close()
+			continue
+		}
+		resp.Body.Close()
+
+		salePrice, _ := strconv.ParseFloat(dealLookup.GameInfo.SalePrice, 64)
+		retailPrice, _ := strconv.ParseFloat(dealLookup.GameInfo.RetailPrice, 64)
+
+		if salePrice <= 0 && retailPrice > 0 {
+			salePrice = retailPrice
+		}
+		if retailPrice <= 0 && salePrice > 0 {
+			retailPrice = salePrice
+		}
+
+		isOnSale := salePrice < retailPrice
+		var discount float64
+		if retailPrice > 0 && isOnSale {
+			discount = ((retailPrice - salePrice) / retailPrice) * 100
+		}
+
+		_, err = s.db.ExecContext(ctx, `
+			UPDATE current_prices
+			SET current_price = $1, regular_price = $2, discount_percentage = $3, is_on_sale = $4, last_updated = NOW()
+			WHERE store_product_id = $5;
+		`, salePrice, retailPrice, discount, isOnSale, it.spID)
+
+		if err == nil {
+			if it.isOnSale && !isOnSale {
+				deactivatedCount++
+			} else {
+				updatedCount++
+			}
+		}
+	}
+
+	// Registrar en sync_logs
+	cleanupMsg := fmt.Sprintf("Mantenimiento completado: %d ofertas actualizadas, %d ofertas caducadas retiradas", updatedCount, deactivatedCount)
+	_, _ = s.db.ExecContext(ctx, `
+		INSERT INTO sync_logs (source, deals_processed, status, error_message, executed_at)
+		VALUES ($1, $2, $3, $4, NOW());
+	`, "deals_cleanup_maintenance", updatedCount+deactivatedCount, "success", cleanupMsg)
+
+	return updatedCount, deactivatedCount, nil
+}

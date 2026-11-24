@@ -63,7 +63,16 @@ func (h *SyncHandler) IngestDeals(w http.ResponseWriter, r *http.Request) {
 func (h *SyncHandler) RandomSync(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	result, err := h.syncService.FetchRandomFromServer(r.Context())
+	countStr := r.URL.Query().Get("count")
+	var result *services.RandomSyncResult
+	var err error
+
+	if countStr == "300" {
+		result, err = h.syncService.FetchRandomBatchFromServer(r.Context(), 300)
+	} else {
+		result, err = h.syncService.FetchRandomFromServer(r.Context())
+	}
+
 	if err != nil {
 		w.WriteHeader(http.StatusBadGateway)
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -158,4 +167,25 @@ func (h *SyncHandler) GetSyncLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(logs)
+}
+
+// CleanupExpiredDeals verifica y actualiza ofertas en la base de datos que ya hayan caducado en CheapShark
+func (h *SyncHandler) CleanupExpiredDeals(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	updated, deactivated, err := h.syncService.RefreshAndCleanupDeals(r.Context(), 100)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Error al actualizar y limpiar ofertas: " + err.Error(),
+		})
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":           "Mantenimiento de ofertas completado",
+		"deals_updated":     updated,
+		"deals_deactivated": deactivated,
+	})
 }

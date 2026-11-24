@@ -355,12 +355,12 @@ export const GameDetailPage: React.FC = () => {
             {isSearchingStores ? (
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                Buscando tiendas en CheapShark...
+                Actualizando precios en CheapShark...
               </>
             ) : (
               <>
                 <RefreshCw className="w-3.5 h-3.5" />
-                Buscar en Más Tiendas
+                Actualizar Precios en Vivo
               </>
             )}
           </button>

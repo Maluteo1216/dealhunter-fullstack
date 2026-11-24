@@ -173,7 +173,7 @@ export const api = {
     });
   },
 
-  randomServerSync: (): Promise<{
+  randomServerSync: (count?: number): Promise<{
     message: string;
     result: {
       deals_processed: number;
@@ -182,6 +182,7 @@ export const api = {
       sort_by: string;
     };
   }> => {
+    const q = count ? `?count=${count}` : '';
     return request<{
       message: string;
       result: {
@@ -190,7 +191,13 @@ export const api = {
         page_number: number;
         sort_by: string;
       };
-    }>('/api/v1/sync/random', {
+    }>(`/api/v1/sync/random${q}`, {
+      method: 'POST',
+    });
+  },
+
+  cleanupExpiredDeals: (): Promise<{ message: string; deals_updated: number; deals_deactivated: number }> => {
+    return request<{ message: string; deals_updated: number; deals_deactivated: number }>('/api/v1/sync/cleanup', {
       method: 'POST',
     });
   },

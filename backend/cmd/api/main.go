@@ -37,7 +37,7 @@ func main() {
 	}
 
 	var dbPool = db.Pool
-	authHandler := handlers.NewAuthHandler(dbPool, cfg.JWTSecret, cfg.GoogleClientID)
+	authHandler := handlers.NewAuthHandler(dbPool, cfg.JWTSecret, cfg.GoogleClientID, cfg.AdminEmail)
 	gameHandler := handlers.NewGameHandler(dbPool, syncService)
 	storeHandler := handlers.NewStoreHandler(dbPool)
 	wishlistHandler := handlers.NewWishlistHandler(dbPool)
@@ -85,12 +85,18 @@ func main() {
 		api.Post("/games/{slug}/enrich", gameHandler.EnrichSingleGame)
 		api.Get("/stores", storeHandler.GetStores)
 
-		// Sincronización pública / administrativa
-		api.Post("/sync/ingest", syncHandler.IngestDeals)
-		api.Post("/sync/server", syncHandler.ServerSync)
-		api.Post("/sync/random", syncHandler.RandomSync)
-		api.Post("/sync/enrich", syncHandler.EnrichCatalog)
-		api.Get("/sync/logs", syncHandler.GetSyncLogs)
+		// Sincronización administrativa restringida exclusivamente al Administrador
+		api.Group(func(admin chi.Router) {
+			admin.Use(middleware.AuthMiddleware(cfg.JWTSecret))
+			admin.Use(middleware.RequireAdminMiddleware(cfg.AdminEmail))
+
+			admin.Post("/sync/ingest", syncHandler.IngestDeals)
+			admin.Post("/sync/server", syncHandler.ServerSync)
+			admin.Post("/sync/random", syncHandler.RandomSync)
+			admin.Post("/sync/enrich", syncHandler.EnrichCatalog)
+			admin.Get("/sync/logs", syncHandler.GetSyncLogs)
+			admin.Post("/sync/cleanup", syncHandler.CleanupExpiredDeals)
+		})
 
 		// Rutas protegidas por JWT
 		api.Group(func(protected chi.Router) {

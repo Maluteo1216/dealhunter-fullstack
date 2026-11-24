@@ -12,6 +12,7 @@ type User struct {
 	PasswordHash string    `json:"-"`
 	GoogleID     *string   `json:"google_id,omitempty"`
 	AvatarURL    string    `json:"avatar_url"`
+	IsAdmin      bool      `json:"is_admin"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
@@ -21,6 +22,7 @@ type UserDTO struct {
 	Username  string    `json:"username"`
 	Email     string    `json:"email"`
 	AvatarURL string    `json:"avatar_url"`
+	IsAdmin   bool      `json:"is_admin"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

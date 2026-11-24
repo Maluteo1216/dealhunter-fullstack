@@ -20,13 +20,15 @@ type AuthHandler struct {
 	db             *sql.DB
 	jwtSecret      string
 	googleClientID string
+	adminEmail     string
 }
 
-func NewAuthHandler(db *sql.DB, jwtSecret string, googleClientID string) *AuthHandler {
+func NewAuthHandler(db *sql.DB, jwtSecret string, googleClientID string, adminEmail string) *AuthHandler {
 	return &AuthHandler{
 		db:             db,
 		jwtSecret:      jwtSecret,
 		googleClientID: googleClientID,
+		adminEmail:     adminEmail,
 	}
 }
 
@@ -35,6 +37,7 @@ func (h *AuthHandler) generateToken(user models.User) (string, error) {
 		"user_id":  user.ID,
 		"username": user.Username,
 		"email":    user.Email,
+		"is_admin": user.IsAdmin,
 		"exp":      time.Now().Add(7 * 24 * time.Hour).Unix(),
 		"iat":      time.Now().Unix(),
 	}
@@ -70,16 +73,19 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	isAdmin := h.adminEmail != "" && strings.EqualFold(req.Email, h.adminEmail)
+
 	var user models.User
 	user.Username = req.Username
 	user.Email = req.Email
+	user.IsAdmin = isAdmin
 
 	err = h.db.QueryRowContext(r.Context(), `
-		INSERT INTO users (username, email, password_hash, created_at)
-		VALUES ($1, $2, $3, NOW())
-		RETURNING id, username, email, avatar_url, created_at;
-	`, req.Username, req.Email, string(hashedPassword)).Scan(
-		&user.ID, &user.Username, &user.Email, &user.AvatarURL, &user.CreatedAt,
+		INSERT INTO users (username, email, password_hash, is_admin, created_at)
+		VALUES ($1, $2, $3, $4, NOW())
+		RETURNING id, username, email, avatar_url, COALESCE(is_admin, false), created_at;
+	`, req.Username, req.Email, string(hashedPassword), isAdmin).Scan(
+		&user.ID, &user.Username, &user.Email, &user.AvatarURL, &user.IsAdmin, &user.CreatedAt,
 	)
 
 	if err != nil {
@@ -103,6 +109,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 			Username:  user.Username,
 			Email:     user.Email,
 			AvatarURL: user.AvatarURL,
+			IsAdmin:   user.IsAdmin,
 			CreatedAt: user.CreatedAt,
 		},
 	})
@@ -124,10 +131,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var user models.User
 	var passwordHash string
 	err := h.db.QueryRowContext(r.Context(), `
-		SELECT id, username, email, password_hash, avatar_url, created_at
+		SELECT id, username, email, password_hash, avatar_url, COALESCE(is_admin, false), created_at
 		FROM users
 		WHERE email = $1;
-	`, req.Email).Scan(&user.ID, &user.Username, &user.Email, &passwordHash, &user.AvatarURL, &user.CreatedAt)
+	`, req.Email).Scan(&user.ID, &user.Username, &user.Email, &passwordHash, &user.AvatarURL, &user.IsAdmin, &user.CreatedAt)
 
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -147,6 +154,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.adminEmail != "" && strings.EqualFold(user.Email, h.adminEmail) {
+		user.IsAdmin = true
+		_, _ = h.db.ExecContext(r.Context(), `UPDATE users SET is_admin = true WHERE id = $1`, user.ID)
+	}
+
 	token, err := h.generateToken(user)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -162,6 +174,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			Username:  user.Username,
 			Email:     user.Email,
 			AvatarURL: user.AvatarURL,
+			IsAdmin:   user.IsAdmin,
 			CreatedAt: user.CreatedAt,
 		},
 	})
@@ -222,10 +235,12 @@ func (h *AuthHandler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Buscar si el usuario ya existe por google_id o por email
 	err = h.db.QueryRowContext(r.Context(), `
-		SELECT id, username, email, avatar_url, created_at
+		SELECT id, username, email, avatar_url, COALESCE(is_admin, false), created_at
 		FROM users
 		WHERE google_id = $1 OR email = $2;
-	`, googleID, email).Scan(&user.ID, &user.Username, &user.Email, &user.AvatarURL, &user.CreatedAt)
+	`, googleID, email).Scan(&user.ID, &user.Username, &user.Email, &user.AvatarURL, &user.IsAdmin, &user.CreatedAt)
+
+	isAdmin := h.adminEmail != "" && strings.EqualFold(email, h.adminEmail)
 
 	if err == sql.ErrNoRows {
 		// Crear nuevo usuario vinculado a Google
@@ -249,12 +264,14 @@ func (h *AuthHandler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 			uniqueUsername = fmt.Sprintf("%s_%d", baseUsername, time.Now().UnixNano()%1000)
 		}
 
+		user.IsAdmin = isAdmin
+
 		err = h.db.QueryRowContext(r.Context(), `
-			INSERT INTO users (username, email, password_hash, google_id, avatar_url, created_at)
-			VALUES ($1, $2, '', $3, $4, NOW())
-			RETURNING id, username, email, avatar_url, created_at;
-		`, uniqueUsername, email, googleID, avatarURL).Scan(
-			&user.ID, &user.Username, &user.Email, &user.AvatarURL, &user.CreatedAt,
+			INSERT INTO users (username, email, password_hash, google_id, avatar_url, is_admin, created_at)
+			VALUES ($1, $2, '', $3, $4, $5, NOW())
+			RETURNING id, username, email, avatar_url, COALESCE(is_admin, false), created_at;
+		`, uniqueUsername, email, googleID, avatarURL, isAdmin).Scan(
+			&user.ID, &user.Username, &user.Email, &user.AvatarURL, &user.IsAdmin, &user.CreatedAt,
 		)
 
 		if err != nil {
@@ -263,13 +280,17 @@ func (h *AuthHandler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if err == nil {
-		// Actualizar google_id y avatar si estaban vacíos
+		if isAdmin {
+			user.IsAdmin = true
+		}
+		// Actualizar google_id, avatar e is_admin si corresponde
 		_, _ = h.db.ExecContext(r.Context(), `
 			UPDATE users 
 			SET google_id = COALESCE(NULLIF(google_id, ''), $1),
-			    avatar_url = COALESCE(NULLIF($2, ''), avatar_url)
-			WHERE id = $3;
-		`, googleID, avatarURL, user.ID)
+			    avatar_url = COALESCE(NULLIF($2, ''), avatar_url),
+			    is_admin = is_admin OR $3
+			WHERE id = $4;
+		`, googleID, avatarURL, isAdmin, user.ID)
 		if avatarURL != "" {
 			user.AvatarURL = avatarURL
 		}
@@ -294,6 +315,7 @@ func (h *AuthHandler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 			Username:  user.Username,
 			Email:     user.Email,
 			AvatarURL: user.AvatarURL,
+			IsAdmin:   user.IsAdmin,
 			CreatedAt: user.CreatedAt,
 		},
 	})
@@ -312,15 +334,19 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 
 	var user models.UserDTO
 	err = h.db.QueryRowContext(r.Context(), `
-		SELECT id, username, email, avatar_url, created_at
+		SELECT id, username, email, avatar_url, COALESCE(is_admin, false), created_at
 		FROM users
 		WHERE id = $1;
-	`, userID).Scan(&user.ID, &user.Username, &user.Email, &user.AvatarURL, &user.CreatedAt)
+	`, userID).Scan(&user.ID, &user.Username, &user.Email, &user.AvatarURL, &user.IsAdmin, &user.CreatedAt)
 
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Usuario no encontrado"})
 		return
+	}
+
+	if h.adminEmail != "" && strings.EqualFold(user.Email, h.adminEmail) {
+		user.IsAdmin = true
 	}
 
 	json.NewEncoder(w).Encode(user)

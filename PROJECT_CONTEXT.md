@@ -78,9 +78,10 @@ El proyecto **DEBE** permanecer dividido en **3 carpetas independientes**, cada 
         ├── /api/client.ts       # Cliente HTTP fetch con inyección de JWT y cold starts
         ├── /context
         │   ├── AuthContext.tsx  # Estado global de sesión de usuario y logout
-        │   └── ServerStatusContext.tsx # Detección y sondeo del cold start de Render
+        │   ├── ServerStatusContext.tsx # Detección y sondeo del cold start de Render
+        │   └── SidebarContext.tsx # Control de estado colapsado/expandido y drawer móvil
         ├── /components
-        │   ├── Sidebar.tsx      # Barra lateral fija con logo, navegación, estado y perfil (con drawer móvil)
+        │   ├── Sidebar.tsx      # Barra lateral colapsable (toggle con llama) con modo icono w-20 y admin check
         │   ├── Navbar.tsx       # Re-export retrocompatible hacia Sidebar
         │   ├── ServerWakeBanner.tsx # Banner discreto cuando Render despierta del reposo
         │   ├── GameCard.tsx     # Tarjeta de juego con ofertas, insignias pastel y wishlist interactiva
@@ -101,7 +102,7 @@ El proyecto **DEBE** permanecer dividido en **3 carpetas independientes**, cada 
 ### Esquema Relacional de 12 Tablas (`01_schema.sql`)
 Todas las tablas cumplen con 3NF y utilizan `DECIMAL(12,2)` para evitar imprecisiones de coma flotante:
 
-1. **`users`**: `id`, `username` (UNIQUE), `email` (UNIQUE), `password_hash`, `google_id` (UNIQUE), `avatar_url`, `created_at`.
+1. **`users`**: `id`, `username` (UNIQUE), `email` (UNIQUE), `password_hash`, `google_id` (UNIQUE), `avatar_url`, `is_admin`, `created_at`.
 2. **`stores`**: `id`, `external_store_id` (VARCHAR UNIQUE), `name`, `slug` (UNIQUE), `base_url`, `logo_url`, `is_active`.
 3. **`genres`**: `id`, `name`, `slug` (UNIQUE).
 4. **`publishers`**: `id`, `name`, `slug` (UNIQUE).
