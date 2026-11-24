@@ -2,7 +2,9 @@ import {
   AuthResponse,
   GameDetail,
   GamesResponse,
+  Genre,
   PriceAlert,
+  Publisher,
   Store,
   SyncLog,
   User,
@@ -93,6 +95,8 @@ export const api = {
   getGames: (params: {
     search?: string;
     store?: string;
+    genre?: string;
+    publisher?: string;
     min_discount?: number;
     max_price?: number;
     sort?: string;
@@ -102,6 +106,8 @@ export const api = {
     const query = new URLSearchParams();
     if (params.search) query.set('search', params.search);
     if (params.store) query.set('store', params.store);
+    if (params.genre) query.set('genre', params.genre);
+    if (params.publisher) query.set('publisher', params.publisher);
     if (params.min_discount) query.set('min_discount', params.min_discount.toString());
     if (params.max_price) query.set('max_price', params.max_price.toString());
     if (params.sort) query.set('sort', params.sort);
@@ -121,9 +127,17 @@ export const api = {
     });
   },
 
-  // Tiendas
+  // Tiendas, Géneros y Publishers
   getStores: (): Promise<Store[]> => {
     return request<Store[]>('/api/v1/stores');
+  },
+
+  getGenres: (): Promise<Genre[]> => {
+    return request<Genre[]>('/api/v1/genres');
+  },
+
+  getPublishers: (): Promise<Publisher[]> => {
+    return request<Publisher[]>('/api/v1/publishers');
   },
 
   // Wishlist

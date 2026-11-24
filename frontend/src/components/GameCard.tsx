@@ -142,9 +142,29 @@ export const GameCard: React.FC<GameCardProps> = ({ game, isWishlisted = false, 
           >
             {game.title}
           </Link>
-          <p className="text-xs text-slate-400 mt-1 line-clamp-2">
-            {game.description || 'Consulta los precios y descuentos en tiempo real en las principales tiendas digitales.'}
-          </p>
+
+          {game.publisher_name && (
+            <div className="text-[11px] text-slate-400 mt-0.5 truncate">
+              {game.publisher_name}
+            </div>
+          )}
+
+          {game.genres && game.genres.length > 0 ? (
+            <div className="flex flex-wrap gap-1 mt-2">
+              {game.genres.slice(0, 3).map((g) => (
+                <span
+                  key={g.id}
+                  className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-800/80 text-slate-300 border border-slate-700/70"
+                >
+                  {g.name}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-slate-400 mt-1 line-clamp-2">
+              {game.description || 'Consulta los precios y descuentos en tiempo real en las principales tiendas digitales.'}
+            </p>
+          )}
         </div>
 
         {/* Pricing Section */}

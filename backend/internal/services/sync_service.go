@@ -23,11 +23,146 @@ import (
 const CheapSharkUserAgent = "DealHunter/1.0 (contact@dealhunter.app; +https://dealhunter.netlify.app)"
 
 type SyncService struct {
-	db *sql.DB
+	db           *sql.DB
+	emailService *EmailService
 }
 
-func NewSyncService(db *sql.DB) *SyncService {
-	return &SyncService{db: db}
+func NewSyncService(db *sql.DB, emailService *EmailService) *SyncService {
+	return &SyncService{
+		db:           db,
+		emailService: emailService,
+	}
+}
+
+type pendingAlertEmail struct {
+	alertID     int
+	toEmail     string
+	username    string
+	gameTitle   string
+	gameSlug    string
+	storeName   string
+	salePrice   float64
+	targetPrice float64
+	savings     float64
+	productURL  string
+}
+
+// collectAndInsertWishlistAlerts busca wishlists que cumplan con el precio objetivo, registra en price_alerts y retorna correos pendientes
+func (s *SyncService) collectAndInsertWishlistAlerts(
+	ctx context.Context,
+	tx *sql.Tx,
+	gameID int,
+	gameTitle, gameSlug, storeName string,
+	salePrice, savings float64,
+	productURL string,
+) []pendingAlertEmail {
+	rowsW, err := tx.QueryContext(ctx, `
+		SELECT w.id, w.target_price, u.email, u.username
+		FROM wishlists w
+		INNER JOIN users u ON u.id = w.user_id
+		WHERE w.game_id = $1 AND w.notify_active = true AND w.target_price >= $2;
+	`, gameID, salePrice)
+	if err != nil {
+		return nil
+	}
+
+	type wishMatch struct {
+		wishlistID  int
+		targetPrice float64
+		email       string
+		username    string
+	}
+	var matches []wishMatch
+	for rowsW.Next() {
+		var m wishMatch
+		if err := rowsW.Scan(&m.wishlistID, &m.targetPrice, &m.email, &m.username); err == nil {
+			matches = append(matches, m)
+		}
+	}
+	rowsW.Close()
+
+	var pending []pendingAlertEmail
+	for _, m := range matches {
+		var countAlerts int
+		_ = tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM price_alerts 
+			WHERE wishlist_id = $1 AND store_name = $2 
+			  AND triggered_price = $3 AND triggered_at > NOW() - INTERVAL '24 hours';
+		`, m.wishlistID, storeName, salePrice).Scan(&countAlerts)
+
+		if countAlerts == 0 {
+			alertMsg := fmt.Sprintf("¡%s está en oferta en %s por solo $%.2f (tu precio objetivo era $%.2f, -%.0f%%)!",
+				gameTitle, storeName, salePrice, m.targetPrice, savings)
+
+			var alertID int
+			errIns := tx.QueryRowContext(ctx, `
+				INSERT INTO price_alerts (wishlist_id, store_name, triggered_price, message, is_read, email_sent, triggered_at)
+				VALUES ($1, $2, $3, $4, false, false, NOW())
+				RETURNING id;
+			`, m.wishlistID, storeName, salePrice, alertMsg).Scan(&alertID)
+
+			if errIns == nil && alertID > 0 {
+				pending = append(pending, pendingAlertEmail{
+					alertID:     alertID,
+					toEmail:     m.email,
+					username:    m.username,
+					gameTitle:   gameTitle,
+					gameSlug:    gameSlug,
+					storeName:   storeName,
+					salePrice:   salePrice,
+					targetPrice: m.targetPrice,
+					savings:     savings,
+					productURL:  productURL,
+				})
+			}
+		}
+	}
+	return pending
+}
+
+// DispatchAlertEmailsAsync envía correos en segundo plano sin bloquear las peticiones HTTP
+func (s *SyncService) DispatchAlertEmailsAsync(items []pendingAlertEmail) {
+	if len(items) == 0 || s.emailService == nil || !s.emailService.IsConfigured() {
+		return
+	}
+
+	go func(alerts []pendingAlertEmail) {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+
+		for _, it := range alerts {
+			err := s.emailService.SendPriceAlertEmail(
+				it.toEmail,
+				it.username,
+				it.gameTitle,
+				it.gameSlug,
+				it.storeName,
+				it.salePrice,
+				it.targetPrice,
+				it.savings,
+				it.productURL,
+			)
+			if err == nil && s.db != nil {
+				_, _ = s.db.ExecContext(ctx, `UPDATE price_alerts SET email_sent = true WHERE id = $1;`, it.alertID)
+			}
+		}
+	}(items)
+}
+
+// SendSingleAlertEmailAsync permite a otros handlers (ej. WishlistHandler, GameHandler) despachar correo por una alerta recién creada
+func (s *SyncService) SendSingleAlertEmailAsync(alertID int, toEmail, username, gameTitle, gameSlug, storeName string, triggeredPrice, targetPrice, discountPct float64, productURL string) {
+	s.DispatchAlertEmailsAsync([]pendingAlertEmail{{
+		alertID:     alertID,
+		toEmail:     toEmail,
+		username:    username,
+		gameTitle:   gameTitle,
+		gameSlug:    gameSlug,
+		storeName:   storeName,
+		salePrice:   triggeredPrice,
+		targetPrice: targetPrice,
+		savings:     discountPct,
+		productURL:  productURL,
+	}})
 }
 
 var nonAlphaNumRegex = regexp.MustCompile(`[^a-z0-9]+`)
@@ -99,6 +234,7 @@ func (s *SyncService) IngestDeals(ctx context.Context, source string, payload mo
 	var syncErr error
 	var touchedGameIDs []int
 	seenGameIDs := make(map[int]bool)
+	var allPendingEmails []pendingAlertEmail
 
 	// 1. Sincronizar Tiendas si vienen en el payload
 	for _, store := range payload.Stores {
@@ -291,48 +427,13 @@ func (s *SyncService) IngestDeals(ctx context.Context, source string, payload mo
 		}
 
 		// F. Revisión de Wishlists y Disparo de Alertas
-		rowsW, err := tx.QueryContext(ctx, `
-			SELECT w.id, w.user_id, w.target_price
-			FROM wishlists w
-			WHERE w.game_id = $1 AND w.notify_active = true AND w.target_price >= $2;
-		`, gameID, salePrice)
-		if err == nil {
-			type wishMatch struct {
-				id          int
-				userID      int
-				targetPrice float64
-			}
-			var matches []wishMatch
-			for rowsW.Next() {
-				var m wishMatch
-				if err := rowsW.Scan(&m.id, &m.userID, &m.targetPrice); err == nil {
-					matches = append(matches, m)
-				}
-			}
-			rowsW.Close()
-
-			for _, m := range matches {
-				var countAlerts int
-				_ = tx.QueryRowContext(ctx, `
-					SELECT COUNT(*) FROM price_alerts 
-					WHERE wishlist_id = $1 AND store_name = $2 
-					  AND triggered_price = $3 AND triggered_at > NOW() - INTERVAL '24 hours';
-				`, m.id, store.Name, salePrice).Scan(&countAlerts)
-
-				if countAlerts == 0 {
-					alertMsg := fmt.Sprintf("¡%s está en oferta en %s por solo $%.2f (tu precio objetivo era $%.2f, -%.0f%%)!",
-						deal.Title, store.Name, salePrice, m.targetPrice, savings)
-
-					_, _ = tx.ExecContext(ctx, `
-						INSERT INTO price_alerts (wishlist_id, store_name, triggered_price, message, is_read, triggered_at)
-						VALUES ($1, $2, $3, $4, false, NOW());
-					`, m.id, store.Name, salePrice, alertMsg)
-				}
-			}
-		}
+		dealAlerts := s.collectAndInsertWishlistAlerts(ctx, tx, gameID, deal.Title, slug, store.Name, salePrice, savings, productURL)
 
 		if err := tx.Commit(); err == nil {
 			processedCount++
+			if len(dealAlerts) > 0 {
+				allPendingEmails = append(allPendingEmails, dealAlerts...)
+			}
 			if !seenGameIDs[gameID] {
 				seenGameIDs[gameID] = true
 				touchedGameIDs = append(touchedGameIDs, gameID)
@@ -340,12 +441,16 @@ func (s *SyncService) IngestDeals(ctx context.Context, source string, payload mo
 		}
 	}
 
+	// Enviar correos de alerta fuera de la transacción
+	s.DispatchAlertEmailsAsync(allPendingEmails)
+
 	// 4. Auto-enriquecimiento integrado: si se solicita, consultar y agregar tiendas oficiales
 	// para TODOS los videojuegos que se acaban de insertar o actualizar que carezcan de tiendas prioritarias
 	enrichedCount := 0
 	storesAddedTotal := 0
 	if autoEnrich && len(touchedGameIDs) > 0 {
-		for _, gid := range touchedGameIDs {
+		var backgroundMetaIDs []int
+		for idx, gid := range touchedGameIDs {
 			var extGameID, steamAppID, title string
 			var storeCount int
 			var hasSteam, hasEpic, hasGOG, hasHumble bool
@@ -372,6 +477,20 @@ func (s *SyncService) IngestDeals(ctx context.Context, source string, payload mo
 				}
 				time.Sleep(50 * time.Millisecond) // Pausa de cortesía para respetar rate-limits de CheapShark
 			}
+
+			// Enriquecer metadatos (géneros y publisher) en línea para los primeros 20 títulos,
+			// y el resto en segundo plano para evitar timeouts HTTP en lotes de 300 juegos
+			if err == nil {
+				if idx < 20 {
+					_ = s.EnrichGameMetadata(ctx, gid, steamAppID, "")
+				} else {
+					backgroundMetaIDs = append(backgroundMetaIDs, gid)
+				}
+			}
+		}
+
+		if len(backgroundMetaIDs) > 0 {
+			go s.EnrichMetadataBatchBackground(backgroundMetaIDs)
 		}
 	}
 
@@ -681,6 +800,8 @@ func (s *SyncService) EnrichGameMultiStore(ctx context.Context, gameID int, exte
 		`, steamAppID, gameID)
 	}
 
+	gameSlug := CleanSlug(title)
+	var pendingEnrichEmails []pendingAlertEmail
 	dealsSaved := 0
 	for _, deal := range gameLookup.Deals {
 		salePrice, err := strconv.ParseFloat(deal.Price, 64)
@@ -770,43 +891,9 @@ func (s *SyncService) EnrichGameMultiStore(ctx context.Context, gameID int, exte
 		}
 
 		// Revisar Wishlists y disparar alertas de precio si coincide el precio objetivo
-		rowsW, errW := tx.QueryContext(ctx, `
-			SELECT w.id, w.target_price
-			FROM wishlists w
-			WHERE w.game_id = $1 AND w.notify_active = true AND w.target_price >= $2;
-		`, gameID, salePrice)
-		if errW == nil {
-			type wishMatch struct {
-				wid int
-				tp  float64
-			}
-			var matches []wishMatch
-			for rowsW.Next() {
-				var m wishMatch
-				if errS := rowsW.Scan(&m.wid, &m.tp); errS == nil {
-					matches = append(matches, m)
-				}
-			}
-			rowsW.Close()
-
-			for _, m := range matches {
-				var countAlerts int
-				_ = tx.QueryRowContext(ctx, `
-					SELECT COUNT(*) FROM price_alerts 
-					WHERE wishlist_id = $1 AND store_name = $2 
-					  AND triggered_price = $3 AND triggered_at > NOW() - INTERVAL '24 hours';
-				`, m.wid, store.Name, salePrice).Scan(&countAlerts)
-
-				if countAlerts == 0 {
-					alertMsg := fmt.Sprintf("¡%s está disponible en %s por solo $%.2f (tu precio objetivo era $%.2f, -%.0f%%)!",
-						title, store.Name, salePrice, m.tp, savings)
-
-					_, _ = tx.ExecContext(ctx, `
-						INSERT INTO price_alerts (wishlist_id, store_name, triggered_price, message, is_read, triggered_at)
-						VALUES ($1, $2, $3, $4, false, NOW());
-					`, m.wid, store.Name, salePrice, alertMsg)
-				}
-			}
+		alertBatch := s.collectAndInsertWishlistAlerts(ctx, tx, gameID, title, gameSlug, store.Name, salePrice, savings, productURL)
+		if len(alertBatch) > 0 {
+			pendingEnrichEmails = append(pendingEnrichEmails, alertBatch...)
 		}
 
 		dealsSaved++
@@ -816,11 +903,201 @@ func (s *SyncService) EnrichGameMultiStore(ctx context.Context, gameID int, exte
 		return 0, err
 	}
 
+	s.DispatchAlertEmailsAsync(pendingEnrichEmails)
+
+	// Enriquecer géneros y publisher si el juego aún no los tiene
+	var firstDealID string
+	if len(gameLookup.Deals) > 0 {
+		firstDealID = gameLookup.Deals[0].DealID
+	}
+	_ = s.EnrichGameMetadata(ctx, gameID, steamAppID, firstDealID)
+
 	return dealsSaved, nil
 }
 
+// buildCheapSharkDealURL construye la URL hacia /deals?id=... sin doble-codificar dealIDs que ya traen %
+func buildCheapSharkDealURL(dealID string) string {
+	if strings.Contains(dealID, "%") {
+		return fmt.Sprintf("https://www.cheapshark.com/api/1.0/deals?id=%s", dealID)
+	}
+	return fmt.Sprintf("https://www.cheapshark.com/api/1.0/deals?id=%s", url.QueryEscape(dealID))
+}
+
+func (s *SyncService) assignGamePublisher(ctx context.Context, gameID int, pubName string) {
+	pubName = strings.TrimSpace(pubName)
+	if pubName == "" || strings.EqualFold(pubName, "N/A") {
+		return
+	}
+	if len(pubName) > 115 {
+		pubName = pubName[:115]
+	}
+	pubSlug := CleanSlug(pubName)
+	var pubID int
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO publishers (name, slug)
+		VALUES ($1, $2)
+		ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
+		RETURNING id;
+	`, pubName, pubSlug).Scan(&pubID)
+	if err == nil && pubID > 0 {
+		_, _ = s.db.ExecContext(ctx, `UPDATE games SET publisher_id = $1 WHERE id = $2;`, pubID, gameID)
+	}
+}
+
+func (s *SyncService) assignGameGenre(ctx context.Context, gameID int, genreName string) {
+	genreName = strings.TrimSpace(genreName)
+	if genreName == "" {
+		return
+	}
+	if len(genreName) > 58 {
+		genreName = genreName[:58]
+	}
+	genreSlug := CleanSlug(genreName)
+	var genreID int
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO genres (name, slug)
+		VALUES ($1, $2)
+		ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
+		RETURNING id;
+	`, genreName, genreSlug).Scan(&genreID)
+	if err == nil && genreID > 0 {
+		_, _ = s.db.ExecContext(ctx, `
+			INSERT INTO game_genres (game_id, genre_id)
+			VALUES ($1, $2)
+			ON CONFLICT DO NOTHING;
+		`, gameID, genreID)
+	}
+}
+
+// EnrichGameMetadata obtiene géneros y publisher reales desde Steam Store API (usando steamAppID)
+// con respaldo a CheapShark /deals?id=... para el publisher si no hay steamAppID.
+func (s *SyncService) EnrichGameMetadata(ctx context.Context, gameID int, steamAppID, externalDealID string) error {
+	if s.db == nil {
+		return nil
+	}
+
+	var hasPub bool
+	var genreCount int
+	var dbSteamID string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT (g.publisher_id IS NOT NULL),
+		       (SELECT COUNT(*) FROM game_genres gg WHERE gg.game_id = g.id),
+		       COALESCE(g.steam_app_id, '')
+		FROM games g WHERE g.id = $1;
+	`, gameID).Scan(&hasPub, &genreCount, &dbSteamID)
+	if err != nil {
+		return err
+	}
+
+	if steamAppID == "" {
+		steamAppID = dbSteamID
+	}
+	if hasPub && genreCount > 0 {
+		return nil
+	}
+
+	client := &http.Client{Timeout: 6 * time.Second}
+
+	// 1. Consultar Steam Store API (endpoint ligero filtrado solo a genres,publishers)
+	if steamAppID != "" {
+		steamURL := fmt.Sprintf("https://store.steampowered.com/api/appdetails?appids=%s&filters=genres,publishers", url.QueryEscape(steamAppID))
+		req, errReq := http.NewRequestWithContext(ctx, "GET", steamURL, nil)
+		if errReq == nil {
+			req.Header.Set("User-Agent", CheapSharkUserAgent)
+			if resp, errDo := client.Do(req); errDo == nil {
+				defer resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					var steamResp map[string]struct {
+						Success bool `json:"success"`
+						Data    struct {
+							Publishers []string `json:"publishers"`
+							Genres     []struct {
+								ID          string `json:"id"`
+								Description string `json:"description"`
+							} `json:"genres"`
+						} `json:"data"`
+					}
+					if errDec := json.NewDecoder(resp.Body).Decode(&steamResp); errDec == nil {
+						if entry, ok := steamResp[steamAppID]; ok && entry.Success {
+							if !hasPub {
+								for _, p := range entry.Data.Publishers {
+									pTrim := strings.TrimSpace(p)
+									if pTrim != "" && !strings.EqualFold(pTrim, "N/A") {
+										s.assignGamePublisher(ctx, gameID, pTrim)
+										hasPub = true
+										break
+									}
+								}
+							}
+							for _, g := range entry.Data.Genres {
+								if strings.TrimSpace(g.Description) != "" {
+									s.assignGameGenre(ctx, gameID, g.Description)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Respaldo en CheapShark /deals?id=... para obtener publisher si aún falta
+	if !hasPub {
+		if externalDealID == "" {
+			_ = s.db.QueryRowContext(ctx, `
+				SELECT COALESCE(external_deal_id, '') FROM store_products 
+				WHERE game_id = $1 AND external_deal_id != '' LIMIT 1;
+			`, gameID).Scan(&externalDealID)
+		}
+		if externalDealID != "" {
+			csURL := buildCheapSharkDealURL(externalDealID)
+			reqCS, errCS := http.NewRequestWithContext(ctx, "GET", csURL, nil)
+			if errCS == nil {
+				reqCS.Header.Set("User-Agent", CheapSharkUserAgent)
+				if respCS, errDo := client.Do(reqCS); errDo == nil {
+					defer respCS.Body.Close()
+					if respCS.StatusCode == http.StatusOK {
+						var dealLookup struct {
+							GameInfo struct {
+								Publisher string `json:"publisher"`
+							} `json:"gameInfo"`
+						}
+						if errDec := json.NewDecoder(respCS.Body).Decode(&dealLookup); errDec == nil {
+							pub := strings.TrimSpace(dealLookup.GameInfo.Publisher)
+							if pub != "" && !strings.EqualFold(pub, "N/A") {
+								s.assignGamePublisher(ctx, gameID, pub)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// EnrichMetadataBatchBackground completa géneros y publishers en segundo plano para lotes grandes sin bloquear la respuesta HTTP
+func (s *SyncService) EnrichMetadataBatchBackground(gameIDs []int) {
+	if s.db == nil || len(gameIDs) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	for _, gid := range gameIDs {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		_ = s.EnrichGameMetadata(ctx, gid, "", "")
+		time.Sleep(350 * time.Millisecond)
+	}
+}
+
 // EnrichCatalogMultiStore enriquece en lote videojuegos del catálogo que carecen de las tiendas prioritarias
-// (Steam, Epic Games Store, GOG, Humble Bundle) o que tienen pocas tiendas vinculadas
+// (Steam, Epic Games Store, GOG, Humble Bundle) o que carecen de géneros/publisher
 func (s *SyncService) EnrichCatalogMultiStore(ctx context.Context, maxGames int) (int, int, error) {
 	if s.db == nil {
 		return 0, 0, fmt.Errorf("base de datos no conectada")
@@ -837,8 +1114,11 @@ func (s *SyncService) EnrichCatalogMultiStore(ctx context.Context, maxGames int)
 		       g.title
 		FROM games g
 		WHERE (
+			-- Juegos sin publisher o sin géneros asignados
+			g.publisher_id IS NULL
+			OR NOT EXISTS (SELECT 1 FROM game_genres gg WHERE gg.game_id = g.id)
 			-- Juegos con pocas tiendas registradas
-			(SELECT COUNT(DISTINCT sp.store_id) FROM store_products sp WHERE sp.game_id = g.id) < 4
+			OR (SELECT COUNT(DISTINCT sp.store_id) FROM store_products sp WHERE sp.game_id = g.id) < 4
 			-- O juegos sin Steam (store 1)
 			OR NOT EXISTS (
 				SELECT 1 FROM store_products sp 
@@ -891,13 +1171,15 @@ func (s *SyncService) EnrichCatalogMultiStore(ctx context.Context, maxGames int)
 	totalStoresAdded := 0
 
 	for _, g := range gamesToEnrich {
-		// Pausa breve para respetar los límites de tasa de CheapShark API
-		time.Sleep(120 * time.Millisecond)
+		// Pausa breve para respetar los límites de tasa de CheapShark y Steam API
+		time.Sleep(150 * time.Millisecond)
 
 		storesAdded, err := s.EnrichGameMultiStore(ctx, g.id, g.extGameID, g.steamAppID, g.title)
 		if err == nil && storesAdded > 0 {
 			enrichedGamesCount++
 			totalStoresAdded += storesAdded
+		} else {
+			_ = s.EnrichGameMetadata(ctx, g.id, g.steamAppID, "")
 		}
 	}
 
@@ -1138,9 +1420,12 @@ func (s *SyncService) RefreshAndCleanupDeals(ctx context.Context, limit int) (in
 
 	// 1. Obtener store_products con ofertas marcadas como activas o con descuentos para revalidar
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT sp.id, sp.external_deal_id, cp.regular_price, cp.current_price, cp.is_on_sale
+		SELECT sp.id, sp.game_id, g.title, g.slug, st.name, sp.product_url,
+		       sp.external_deal_id, cp.regular_price, cp.current_price, cp.is_on_sale
 		FROM store_products sp
 		JOIN current_prices cp ON cp.store_product_id = sp.id
+		JOIN games g ON g.id = sp.game_id
+		JOIN stores st ON st.id = sp.store_id
 		WHERE cp.is_on_sale = true OR cp.last_updated < NOW() - INTERVAL '24 hours'
 		ORDER BY cp.last_updated ASC
 		LIMIT $1;
@@ -1152,6 +1437,11 @@ func (s *SyncService) RefreshAndCleanupDeals(ctx context.Context, limit int) (in
 
 	type dealItem struct {
 		spID         int
+		gameID       int
+		gameTitle    string
+		gameSlug     string
+		storeName    string
+		productURL   string
 		dealID       string
 		regularPrice float64
 		currentPrice float64
@@ -1161,7 +1451,10 @@ func (s *SyncService) RefreshAndCleanupDeals(ctx context.Context, limit int) (in
 	var items []dealItem
 	for rows.Next() {
 		var it dealItem
-		if err := rows.Scan(&it.spID, &it.dealID, &it.regularPrice, &it.currentPrice, &it.isOnSale); err == nil {
+		if err := rows.Scan(
+			&it.spID, &it.gameID, &it.gameTitle, &it.gameSlug, &it.storeName, &it.productURL,
+			&it.dealID, &it.regularPrice, &it.currentPrice, &it.isOnSale,
+		); err == nil {
 			items = append(items, it)
 		}
 	}
@@ -1169,6 +1462,7 @@ func (s *SyncService) RefreshAndCleanupDeals(ctx context.Context, limit int) (in
 	client := &http.Client{Timeout: 10 * time.Second}
 	updatedCount := 0
 	deactivatedCount := 0
+	var allPendingEmails []pendingAlertEmail
 
 	for _, it := range items {
 		select {
@@ -1177,7 +1471,7 @@ func (s *SyncService) RefreshAndCleanupDeals(ctx context.Context, limit int) (in
 		default:
 		}
 
-		dealReqURL := fmt.Sprintf("https://www.cheapshark.com/api/1.0/deals?id=%s", url.QueryEscape(it.dealID))
+		dealReqURL := buildCheapSharkDealURL(it.dealID)
 		req, err := http.NewRequestWithContext(ctx, "GET", dealReqURL, nil)
 		if err != nil {
 			continue
@@ -1197,6 +1491,12 @@ func (s *SyncService) RefreshAndCleanupDeals(ctx context.Context, limit int) (in
 				SET is_on_sale = false, current_price = regular_price, discount_percentage = 0.00, last_updated = NOW()
 				WHERE store_product_id = $1;
 			`, it.spID)
+			if math.Abs(it.currentPrice-it.regularPrice) > 0.009 {
+				_, _ = s.db.ExecContext(ctx, `
+					INSERT INTO price_history (store_product_id, regular_price, sale_price, discount_percentage, recorded_at)
+					VALUES ($1, $2, $3, 0.00, NOW());
+				`, it.spID, it.regularPrice, it.regularPrice)
+			}
 			deactivatedCount++
 			continue
 		}
@@ -1211,6 +1511,7 @@ func (s *SyncService) RefreshAndCleanupDeals(ctx context.Context, limit int) (in
 				SalePrice   string `json:"salePrice"`
 				RetailPrice string `json:"retailPrice"`
 				Name        string `json:"name"`
+				Publisher   string `json:"publisher"`
 			} `json:"gameInfo"`
 		}
 
@@ -1233,23 +1534,51 @@ func (s *SyncService) RefreshAndCleanupDeals(ctx context.Context, limit int) (in
 		isOnSale := salePrice < retailPrice
 		var discount float64
 		if retailPrice > 0 && isOnSale {
-			discount = ((retailPrice - salePrice) / retailPrice) * 100
+			discount = math.Round(((retailPrice-salePrice)/retailPrice)*10000) / 100
 		}
 
-		_, err = s.db.ExecContext(ctx, `
+		if dealLookup.GameInfo.Publisher != "" && !strings.EqualFold(dealLookup.GameInfo.Publisher, "N/A") {
+			s.assignGamePublisher(ctx, it.gameID, dealLookup.GameInfo.Publisher)
+		}
+
+		tx, txErr := s.db.BeginTx(ctx, nil)
+		if txErr != nil {
+			continue
+		}
+
+		_, err = tx.ExecContext(ctx, `
 			UPDATE current_prices
 			SET current_price = $1, regular_price = $2, discount_percentage = $3, is_on_sale = $4, last_updated = NOW()
 			WHERE store_product_id = $5;
 		`, salePrice, retailPrice, discount, isOnSale, it.spID)
 
 		if err == nil {
-			if it.isOnSale && !isOnSale {
-				deactivatedCount++
-			} else {
-				updatedCount++
+			if math.Abs(it.currentPrice-salePrice) > 0.009 {
+				_, _ = tx.ExecContext(ctx, `
+					INSERT INTO price_history (store_product_id, regular_price, sale_price, discount_percentage, recorded_at)
+					VALUES ($1, $2, $3, $4, NOW());
+				`, it.spID, retailPrice, salePrice, discount)
 			}
+
+			alertBatch := s.collectAndInsertWishlistAlerts(ctx, tx, it.gameID, it.gameTitle, it.gameSlug, it.storeName, salePrice, discount, it.productURL)
+			if errCommit := tx.Commit(); errCommit == nil {
+				if len(alertBatch) > 0 {
+					allPendingEmails = append(allPendingEmails, alertBatch...)
+				}
+				if it.isOnSale && !isOnSale {
+					deactivatedCount++
+				} else {
+					updatedCount++
+				}
+			} else {
+				tx.Rollback()
+			}
+		} else {
+			tx.Rollback()
 		}
 	}
+
+	s.DispatchAlertEmailsAsync(allPendingEmails)
 
 	// Registrar en sync_logs
 	cleanupMsg := fmt.Sprintf("Mantenimiento completado: %d ofertas actualizadas, %d ofertas caducadas retiradas", updatedCount, deactivatedCount)

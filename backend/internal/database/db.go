@@ -35,8 +35,9 @@ func Connect(dbURL string) (*DB, error) {
 		return &DB{Pool: pool}, err
 	}
 
-	// Auto-migración segura: asegurar columna is_admin en tabla users si no existe
+	// Auto-migración segura: asegurar columnas is_admin y email_sent si no existen
 	_, _ = pool.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;`)
+	_, _ = pool.Exec(`ALTER TABLE price_alerts ADD COLUMN IF NOT EXISTS email_sent BOOLEAN DEFAULT FALSE;`)
 
 	log.Println("Conexión exitosa a la base de datos PostgreSQL")
 	return &DB{Pool: pool}, nil

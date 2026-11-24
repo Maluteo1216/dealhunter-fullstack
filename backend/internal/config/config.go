@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -14,6 +15,12 @@ type Config struct {
 	JWTSecret      string
 	GoogleClientID string
 	AdminEmail     string
+	SMTPHost       string
+	SMTPPort       string
+	SMTPUser       string
+	SMTPPass       string
+	SMTPFrom       string
+	FrontendURL    string
 }
 
 func LoadConfig() *Config {
@@ -36,11 +43,36 @@ func LoadConfig() *Config {
 	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
 	adminEmail := strings.ToLower(strings.TrimSpace(os.Getenv("ADMIN_EMAIL")))
 
+	smtpUser := strings.TrimSpace(os.Getenv("SMTP_USER"))
+	smtpPass := strings.ReplaceAll(strings.TrimSpace(os.Getenv("SMTP_PASS")), " ", "")
+	smtpHost := strings.TrimSpace(os.Getenv("SMTP_HOST"))
+	if smtpHost == "" && smtpUser != "" {
+		smtpHost = "smtp.gmail.com"
+	}
+	smtpPort := strings.TrimSpace(os.Getenv("SMTP_PORT"))
+	if smtpPort == "" {
+		smtpPort = "587"
+	}
+	smtpFrom := strings.TrimSpace(os.Getenv("SMTP_FROM"))
+	if smtpFrom == "" && smtpUser != "" {
+		smtpFrom = fmt.Sprintf("DealHunter <%s>", smtpUser)
+	}
+	frontendURL := strings.TrimRight(strings.TrimSpace(os.Getenv("FRONTEND_URL")), "/")
+	if frontendURL == "" {
+		frontendURL = "https://dealhunter.netlify.app"
+	}
+
 	return &Config{
 		Port:           port,
 		DatabaseURL:    dbURL,
 		JWTSecret:      jwtSecret,
 		GoogleClientID: googleClientID,
 		AdminEmail:     adminEmail,
+		SMTPHost:       smtpHost,
+		SMTPPort:       smtpPort,
+		SMTPUser:       smtpUser,
+		SMTPPass:       smtpPass,
+		SMTPFrom:       smtpFrom,
+		FrontendURL:    frontendURL,
 	}
 }

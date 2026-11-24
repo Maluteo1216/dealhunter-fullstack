@@ -31,16 +31,25 @@ func main() {
 	}
 
 	// Inicializar servicios y handlers
+	emailService := services.NewEmailService(
+		cfg.SMTPHost,
+		cfg.SMTPPort,
+		cfg.SMTPUser,
+		cfg.SMTPPass,
+		cfg.SMTPFrom,
+		cfg.FrontendURL,
+	)
+
 	var syncService *services.SyncService
 	if db != nil && db.Pool != nil {
-		syncService = services.NewSyncService(db.Pool)
+		syncService = services.NewSyncService(db.Pool, emailService)
 	}
 
 	var dbPool = db.Pool
 	authHandler := handlers.NewAuthHandler(dbPool, cfg.JWTSecret, cfg.GoogleClientID, cfg.AdminEmail)
 	gameHandler := handlers.NewGameHandler(dbPool, syncService)
 	storeHandler := handlers.NewStoreHandler(dbPool)
-	wishlistHandler := handlers.NewWishlistHandler(dbPool)
+	wishlistHandler := handlers.NewWishlistHandler(dbPool, syncService)
 	alertHandler := handlers.NewAlertHandler(dbPool)
 	syncHandler := handlers.NewSyncHandler(dbPool, syncService)
 
@@ -79,11 +88,13 @@ func main() {
 		api.Post("/auth/login", authHandler.Login)
 		api.Post("/auth/google", authHandler.GoogleLogin) // Login obligatorio con Google OAuth
 
-		// Catálogo y tiendas públicas
+		// Catálogo, tiendas, géneros y publishers públicos
 		api.Get("/games", gameHandler.GetGames)
 		api.Get("/games/{slug}", gameHandler.GetGameBySlug)
 		api.Post("/games/{slug}/enrich", gameHandler.EnrichSingleGame)
 		api.Get("/stores", storeHandler.GetStores)
+		api.Get("/genres", storeHandler.GetGenres)
+		api.Get("/publishers", storeHandler.GetPublishers)
 
 		// Sincronización administrativa restringida exclusivamente al Administrador
 		api.Group(func(admin chi.Router) {

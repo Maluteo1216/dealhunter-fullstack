@@ -14,6 +14,7 @@ import {
   DollarSign,
   ArrowRight,
   Sparkles,
+  MailCheck,
 } from 'lucide-react';
 
 export const WishlistPage: React.FC = () => {
@@ -164,13 +165,19 @@ export const WishlistPage: React.FC = () => {
                 }`}
               >
                 <div className="space-y-1">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="text-xs font-bold text-white">
                       {alert.game_title}
                     </span>
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
                       {alert.store_name}
                     </span>
+                    {alert.email_sent && (
+                      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                        <MailCheck className="w-3 h-3" />
+                        Correo enviado
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs">{alert.message}</p>
                   <span className="text-[10px] text-slate-500 block">

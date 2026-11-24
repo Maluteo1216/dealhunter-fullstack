@@ -40,16 +40,18 @@ type Store struct {
 
 // Genre representa un género de videojuegos
 type Genre struct {
-	ID   int    `json:"id"`
-	Name string `json:"name"`
-	Slug string `json:"slug"`
+	ID         int    `json:"id"`
+	Name       string `json:"name"`
+	Slug       string `json:"slug"`
+	GamesCount int    `json:"games_count"`
 }
 
 // Publisher representa una distribuidora o desarrollador
 type Publisher struct {
-	ID   int    `json:"id"`
-	Name string `json:"name"`
-	Slug string `json:"slug"`
+	ID         int    `json:"id"`
+	Name       string `json:"name"`
+	Slug       string `json:"slug"`
+	GamesCount int    `json:"games_count"`
 }
 
 // BestDeal resumen de la oferta más conveniente para una tarjeta de juego
@@ -76,6 +78,7 @@ type Game struct {
 	SteamAppID         string     `json:"steam_app_id,omitempty"`
 	PublisherID        *int       `json:"publisher_id,omitempty"`
 	PublisherName      string     `json:"publisher_name,omitempty"`
+	PublisherSlug      string     `json:"publisher_slug,omitempty"`
 	HistoricalLowPrice *float64   `json:"historical_low_price,omitempty"`
 	HistoricalLowDate  *time.Time `json:"historical_low_date,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
@@ -103,6 +106,7 @@ type StorePriceInfo struct {
 // PriceHistoryPoint punto temporal de precio para gráficas de series de tiempo
 type PriceHistoryPoint struct {
 	StoreName          string    `json:"store_name"`
+	StoreSlug          string    `json:"store_slug"`
 	StoreLogo          string    `json:"store_logo"`
 	RegularPrice       float64   `json:"regular_price"`
 	SalePrice          float64   `json:"sale_price"`
@@ -137,17 +141,18 @@ type WishlistItem struct {
 
 // PriceAlert notificación disparada por cumplimiento de precio objetivo
 type PriceAlert struct {
-	ID              int       `json:"id"`
-	WishlistID      int       `json:"wishlist_id"`
-	GameTitle       string    `json:"game_title"`
-	GameSlug        string    `json:"game_slug"`
-	GameCover       string    `json:"game_cover"`
-	StoreName       string    `json:"store_name"`
-	TriggeredPrice  float64   `json:"triggered_price"`
-	TargetPrice     float64   `json:"target_price"`
-	Message         string    `json:"message"`
-	IsRead          bool      `json:"is_read"`
-	TriggeredAt     time.Time `json:"triggered_at"`
+	ID             int       `json:"id"`
+	WishlistID     int       `json:"wishlist_id"`
+	GameTitle      string    `json:"game_title"`
+	GameSlug       string    `json:"game_slug"`
+	GameCover      string    `json:"game_cover"`
+	StoreName      string    `json:"store_name"`
+	TriggeredPrice float64   `json:"triggered_price"`
+	TargetPrice    float64   `json:"target_price"`
+	Message        string    `json:"message"`
+	IsRead         bool      `json:"is_read"`
+	EmailSent      bool      `json:"email_sent"`
+	TriggeredAt    time.Time `json:"triggered_at"`
 }
 
 // SyncLog registro de auditoría de sincronizaciones

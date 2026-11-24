@@ -18,6 +18,20 @@ export interface Store {
   deals_count: number;
 }
 
+export interface Genre {
+  id: number;
+  name: string;
+  slug: string;
+  games_count?: number;
+}
+
+export interface Publisher {
+  id: number;
+  name: string;
+  slug: string;
+  games_count?: number;
+}
+
 export interface BestDeal {
   store_id: number;
   store_name: string;
@@ -40,11 +54,13 @@ export interface Game {
   steam_app_id?: string;
   publisher_id?: number;
   publisher_name?: string;
+  publisher_slug?: string;
   historical_low_price?: number;
   historical_low_date?: string;
   created_at: string;
   stores_count?: number;
   best_deal?: BestDeal;
+  genres?: Genre[];
 }
 
 export interface StorePriceInfo {
@@ -64,6 +80,7 @@ export interface StorePriceInfo {
 
 export interface PriceHistoryPoint {
   store_name: string;
+  store_slug?: string;
   store_logo: string;
   regular_price: number;
   sale_price: number;
@@ -105,6 +122,7 @@ export interface PriceAlert {
   target_price: number;
   message: string;
   is_read: boolean;
+  email_sent?: boolean;
   triggered_at: string;
 }
 

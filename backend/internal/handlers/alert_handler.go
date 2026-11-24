@@ -35,7 +35,7 @@ func (h *AlertHandler) GetAlerts(w http.ResponseWriter, r *http.Request) {
 		SELECT 
 			pa.id, pa.wishlist_id, g.title, g.slug, COALESCE(g.cover_image_url, ''),
 			pa.store_name, pa.triggered_price, w.target_price, pa.message,
-			pa.is_read, pa.triggered_at
+			pa.is_read, COALESCE(pa.email_sent, false), pa.triggered_at
 		FROM price_alerts pa
 		INNER JOIN wishlists w ON w.id = pa.wishlist_id
 		INNER JOIN games g ON g.id = w.game_id
@@ -57,7 +57,7 @@ func (h *AlertHandler) GetAlerts(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(
 			&a.ID, &a.WishlistID, &a.GameTitle, &a.GameSlug, &a.GameCover,
 			&a.StoreName, &a.TriggeredPrice, &a.TargetPrice, &a.Message,
-			&a.IsRead, &a.TriggeredAt,
+			&a.IsRead, &a.EmailSent, &a.TriggeredAt,
 		); err == nil {
 			alerts = append(alerts, a)
 		}

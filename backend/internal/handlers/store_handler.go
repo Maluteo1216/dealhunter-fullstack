@@ -58,3 +58,75 @@ func (h *StoreHandler) GetStores(w http.ResponseWriter, r *http.Request) {
 
 	json.NewEncoder(w).Encode(stores)
 }
+
+// GetGenres obtiene la lista de géneros con conteo de videojuegos asociados
+func (h *StoreHandler) GetGenres(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if h.db == nil {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode([]models.Genre{})
+		return
+	}
+
+	rows, err := h.db.QueryContext(r.Context(), `
+		SELECT ge.id, ge.name, ge.slug, COUNT(DISTINCT gg.game_id) AS games_count
+		FROM genres ge
+		INNER JOIN game_genres gg ON gg.genre_id = ge.id
+		GROUP BY ge.id, ge.name, ge.slug
+		HAVING COUNT(DISTINCT gg.game_id) > 0
+		ORDER BY games_count DESC, ge.name ASC;
+	`)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Error al obtener géneros: " + err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	genres := make([]models.Genre, 0)
+	for rows.Next() {
+		var g models.Genre
+		if err := rows.Scan(&g.ID, &g.Name, &g.Slug, &g.GamesCount); err == nil {
+			genres = append(genres, g)
+		}
+	}
+
+	json.NewEncoder(w).Encode(genres)
+}
+
+// GetPublishers obtiene la lista de distribuidores/publishers con conteo de videojuegos asociados
+func (h *StoreHandler) GetPublishers(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if h.db == nil {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode([]models.Publisher{})
+		return
+	}
+
+	rows, err := h.db.QueryContext(r.Context(), `
+		SELECT p.id, p.name, p.slug, COUNT(DISTINCT g.id) AS games_count
+		FROM publishers p
+		INNER JOIN games g ON g.publisher_id = p.id
+		GROUP BY p.id, p.name, p.slug
+		HAVING COUNT(DISTINCT g.id) > 0
+		ORDER BY games_count DESC, p.name ASC;
+	`)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Error al obtener publishers: " + err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	publishers := make([]models.Publisher, 0)
+	for rows.Next() {
+		var p models.Publisher
+		if err := rows.Scan(&p.ID, &p.Name, &p.Slug, &p.GamesCount); err == nil {
+			publishers = append(publishers, p)
+		}
+	}
+
+	json.NewEncoder(w).Encode(publishers)
+}

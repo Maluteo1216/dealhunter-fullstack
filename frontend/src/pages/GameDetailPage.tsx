@@ -3,10 +3,12 @@ import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { GameDetail } from '../types';
 import { StoreTable } from '../components/StoreTable';
+import { PriceHistoryChart } from '../components/PriceHistoryChart';
 import { useAuth } from '../context/AuthContext';
 import {
   ArrowLeft,
   Bell,
+  Building2,
   CheckCircle,
   ExternalLink,
   Flame,
@@ -17,6 +19,7 @@ import {
   DollarSign,
   Info,
   RefreshCw,
+  Tag,
   Trash2,
 } from 'lucide-react';
 
@@ -210,14 +213,43 @@ export const GameDetailPage: React.FC = () => {
 
         {/* Información y Mejor Precio */}
         <div className="flex-1 space-y-4">
-          <div className="space-y-1">
+          <div className="space-y-2">
             <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-white tracking-tight">
               {game.title}
             </h1>
-            {game.publisher_name && (
-              <p className="text-sm text-slate-400">
-                Distribuidor / Editor: <strong className="text-slate-200">{game.publisher_name}</strong>
-              </p>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              {game.publisher_name && (
+                <Link
+                  to={game.publisher_slug ? `/?publisher=${encodeURIComponent(game.publisher_slug)}` : '/'}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300 hover:text-white transition"
+                  title="Ver más juegos de este distribuidor"
+                >
+                  <Building2 className="w-3.5 h-3.5 text-brand-300" />
+                  <span>Distribuidor:</span>
+                  <strong className="text-slate-100">{game.publisher_name}</strong>
+                </Link>
+              )}
+            </div>
+
+            {/* Sección de Géneros */}
+            {game.genres && game.genres.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                <span className="inline-flex items-center gap-1 text-xs font-semibold text-slate-400 mr-1">
+                  <Tag className="w-3.5 h-3.5 text-brand-300" />
+                  Géneros:
+                </span>
+                {game.genres.map((genre) => (
+                  <Link
+                    key={genre.id}
+                    to={`/?genre=${encodeURIComponent(genre.slug)}`}
+                    className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-brand-500/15 hover:bg-brand-500/25 text-brand-200 border border-brand-500/30 transition"
+                    title={`Filtrar catálogo por género ${genre.name}`}
+                  >
+                    {genre.name}
+                  </Link>
+                ))}
+              </div>
             )}
           </div>
 
@@ -371,6 +403,13 @@ export const GameDetailPage: React.FC = () => {
           historicalLowPrice={game.historical_low_price}
         />
       </div>
+
+      {/* Gráfica de Historial de Precios (Estilo Keepa) */}
+      <PriceHistoryChart
+        priceHistory={detail.price_history}
+        currentPrices={current_prices}
+        historicalLowPrice={game.historical_low_price}
+      />
     </div>
   );
 };

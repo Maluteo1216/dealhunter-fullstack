@@ -1,0 +1,227 @@
+================================================================================
+          DEALHUNTER — GUIA MAESTRA PARA PRESENTACION Y SUSTENTACION
+   Limitaciones Tecnicas Cloud, Arquitectura 3 Capas y Guion de Demostracion
+================================================================================
+
+================================================================================
+PARTE 1: ¿POR QUE ES IMPOSIBLE LA SINCRONIZACION AUTOMATICA Y EN TIEMPO REAL
+         DE TODOS LOS JUEGOS EN LAS VERSIONES GRATUITAS DE RENDER, NEON Y NETLIFY?
+================================================================================
+
+Resumen Ejecutivo:
+Un rastreador masivo en tiempo real (como IsThereAnyDeal) requiere servidores
+dedicados 24/7 y acuerdos o volcados masivos de datos directos con las tiendas.
+Los planes gratuitos de la nube aplican suspensiones por inactividad, limites de
+horas de computo y restricciones de velocidad que harian colapsar el sistema.
+
+--------------------------------------------------------------------------------
+1. CUELLOS DE BOTELLA POR SERVICIO EN CAPA GRATUITA:
+--------------------------------------------------------------------------------
+
+A. CHEAPSHARK API (Origen externo de datos):
+   * Tamano del Catalogo: Existen mas de 120,000 titulos unicos entre Steam,
+     Epic Games Store, GOG y Humble Bundle.
+   * Sin WebSockets ni Notificaciones Push: CheapShark no avisa cuando un
+     precio cambia; el backend debe consultar juego por juego mediante peticiones
+     HTTP GET (polling).
+   * Rate Limits y Proteccion Anti-Bot (Cloudflare): CheapShark bloquea con
+     HTTP 429 (Too Many Requests) o HTTP 403 (Forbidden) si se realizan rafagas
+     masivas de peticiones.
+   * Calculo de Tiempo: Para sincronizar y enriquecer 50,000 juegos en las
+     4 tiendas principales respetando una tasa segura de 2 peticiones/segundo:
+       (50,000 juegos * 4 tiendas) / 2 req/seg = 100,000 segundos (~27.7 horas).
+     Un solo ciclo completo de actualizacion requeriria mas de un dia continuo.
+
+B. RENDER.COM (Servicio de Backend en Go):
+   * Suspension por Inactividad (Sleep Mode / Spin-down): El contenedor gratuito
+     se suspende a los 15 minutos sin trafico HTTP entrante. Todo proceso en
+     segundo plano (daemon, bucle infinito o cron interno) se congela y muere.
+   * Limite de Horas Gratuitas (750 horas/mes): Si se mantuviera encendido
+     24/7 (744 horas al mes), consumiria el 100% de la cuota de la cuenta,
+     dejando sin servicio cualquier otro proyecto.
+   * Memoria RAM Compartida (512 MB): Deserializar y procesar arrays de decenas
+     de miles de juegos provoca errores de falta de memoria (Out Of Memory - OOM).
+
+C. NEON.TECH (Base de Datos PostgreSQL Serverless):
+   * Escalado a Cero (Compute Scale-to-Zero): Neon apaga los recursos de computo
+     cuando la base de datos no tiene consultas activas para no gastar recursos.
+   * Cuota de Horas de Computo (aprox. 100 Compute Unit-hours al mes):
+     Escribir e indexar transacciones de precios cada minuto mantendria la base
+     de datos despierta el 100% del tiempo, agotando la cuota mensual en menos
+     de 5 a 7 dias y bloqueando el acceso a los datos.
+
+D. NETLIFY (Frontend SPA):
+   * Es una red de distribucion de contenido estatico (CDN / Jamstack).
+     Solo entrega archivos compilados (.html, .css, .js) al navegador del cliente;
+     no dispone de un servidor continuo para ejecutar tareas de sincronizacion.
+
+--------------------------------------------------------------------------------
+2. ¿COMO LO HACEN PLATAFORMAS COMERCIALES REALES (IsThereAnyDeal)?
+--------------------------------------------------------------------------------
+1. Servidores dedicados o VPS de alto rendimiento (Hetzner, AWS, DigitalOcean)
+   que corren las 24 horas del dia sin apagarse.
+2. Claves de API directas de Steam (Steamworks Partner API) y archivos de volcado
+   masivo diario (.json.gz / .csv) mediante programas de afiliados con Epic,
+   GOG y Humble, en lugar de consultar juego por juego por HTTP publico.
+3. Colas distribuidas de mensajeria (RabbitMQ, Redis BullMQ, Kafka) con decenas
+   de workers concurrentes procesando tareas en paralelo.
+
+--------------------------------------------------------------------------------
+3. LA SOLUCION INTELIGENTE IMPLEMENTADA EN DEALHUNTER (ARQUITECTURA HIBRIDA):
+--------------------------------------------------------------------------------
+Para operar con alta precision dentro del limite de los planes gratuitos:
+1. Descubrimiento por Lotes (Batch Discovery): El Administrador puede sincronizar
+   lotes de 60 o 300 juegos con un solo clic, incorporando las 4 tiendas clave.
+2. Enriquecimiento Just-In-Time (Bajo Demanda): Cuando un usuario entra a ver la
+   ficha de un juego (/games/{slug}), si el juego no tiene registradas las
+   tiendas clave, Go consulta CheapShark en esa fraccion de segundo y actualiza
+   la base de datos en vivo.
+3. Depuracion de Ofertas Expiradas (Deal Cleanup): Un motor de mantenimiento que
+   revalida ofertas vigentes, detecta ofertas caducadas y actualiza el precio a
+   su valor regular marcando is_on_sale = false.
+
+
+================================================================================
+PARTE 2: GUIA Y GUION ESTRUCTURADO PARA LA PRESENTACION ACADEMICA
+================================================================================
+
+DATOS GENERALES DEL PROYECTO:
+* Nombre: DealHunter
+* Descripcion: Plataforma web de rastreo y comparacion de precios de videojuegos
+  en tiendas oficiales (Steam, Epic Games, GOG, Humble Bundle).
+* Restriccion Arquitectonica: 3 capas desacopladas, 3 lenguajes distintos,
+  cero uso de Python en todo el repositorio.
+
+--------------------------------------------------------------------------------
+GUION PASO A PASO (TIEMPO ESTIMADO: 10 A 15 MINUTOS)
+--------------------------------------------------------------------------------
+
+[0:00 - 2:00] INTRODUCCION Y PLANTEAMIENTO DEL PROBLEMA
+* Saludo al profesor y jurado.
+* El Problema: El mercado digital de PC esta fragmentado. Un mismo juego puede
+  tener un precio en Steam, otro con descuento en Epic Games y otro en GOG.
+  Los usuarios pierden tiempo revisando manualmente o pagan de mas.
+* La Solucion: DealHunter centraliza las ofertas de tiendas oficiales en tiempo
+  real, compara precios, muestra el minimo historico y permite configurar
+  listas de deseados con alertas automaticas cuando el precio baja.
+
+[2:00 - 4:30] ARQUITECTURA EN 3 CAPAS DESACOPLADAS (REGLA DE 3 LENGUAJES)
+* Capa 1: Base de Datos (/database)
+  - Lenguaje: SQL Puro (PostgreSQL 16)
+  - Plataforma Cloud: Neon.tech (PostgreSQL Serverless)
+* Capa 2: Backend REST API (/backend)
+  - Lenguaje: Go (Golang 1.22+)
+  - Plataforma Cloud: Render.com (Web Service)
+  - Router: chi v5 | Driver: database/sql nativo con lib/pq
+  - Justificacion de Go: Alto rendimiento de compilacion nativa, huella de
+    memoria extremadamente baja (~25 MB vs ~150 MB de Node/Python) y manejo
+    nativo de concurrencia mediante Goroutines. Cero lineas de Python.
+* Capa 3: Frontend SPA (/frontend)
+  - Lenguaje: TypeScript
+  - Framework: React 18 + Vite + Tailwind CSS + Lucide Icons
+  - Plataforma Cloud: Netlify (CDN Global)
+
+[4:30 - 7:00] DISENO DE BASE DE DATOS Y NORMALIZACION (3NF)
+* Modelo estructurado en 12 tablas en Tercera Forma Normal (3NF):
+  1. users: Cuentas locales (hash bcrypt) y cuentas autenticadas con Google.
+  2. stores: Tiendas oficiales (Steam, Epic, GOG, Humble, Fanatical, etc.).
+  3. genres y publishers: Metadatos y clasificacion.
+  4. games: Ficha central del videojuego con minimo historico.
+  5. store_products: Relacion N:M desacoplada (un juego existe en varias tiendas).
+  6. current_prices: Estado vigente de la oferta (precios, descuento, bandera de rebaja).
+  7. price_history: Registro temporal de cambios de precios.
+  8. wishlists: Lista de deseados del usuario con precio objetivo personal.
+  9. price_alerts: Notificaciones generadas cuando el precio cumple la meta.
+  10. sync_logs: Registro de auditoria de sincronizaciones.
+* Decision Tecnica Clave: Uso de DECIMAL(12,2) para todos los campos de precio,
+  evitando imprecisiones aritmeticas de redondeo tipicas del tipo FLOAT.
+* Integridad Referencial: Llaves foraneas con clausulas ON DELETE CASCADE e
+  indices B-Tree en columnas criticas (slug, title, is_on_sale, user_id).
+
+[7:00 - 9:30] RETOS TECNICOS Y ALGORITMOS EN GO
+* Normalizacion y Coincidencia de Titulos (TitlesMatch):
+  Algoritmo que limpia caracteres especiales, puntuaciones y espacios para
+  comparar nombres de forma canonica entre tiendas diferentes (evitando falsos
+  positivos con DLCs, bandas sonoras o secuelas).
+* Cabecera de Identidad HTTP:
+  Implementacion de User-Agent formal (DealHunter/1.0) en el cliente Go para
+  evitar bloqueos HTTP 400 por parte de Cloudflare en la API de CheapShark.
+* Consultas SQL Avanzadas con CTE (Common Table Expressions):
+  El motor de filtrado del catalogo utiliza CTEs para filtrar a nivel de
+  oferta individual (tienda, descuento minimo, precio maximo) sin romper la
+  agrupacion de la tarjeta del juego.
+* Seguridad y Roles:
+  - Autenticacion dual: Tradicional con bcrypt y Google OAuth 2.0 validado
+    directamente con los servidores de Google.
+  - Sesiones mediante tokens JWT firmados con HMAC-SHA256 (validez 7 dias).
+  - Control de Acceso (RBAC): Middleware en Go que verifica el campo is_admin
+    para proteger los endpoints del sincronizador.
+
+[9:30 - 12:00] GUION DE LA DEMOSTRACION EN VIVO (PASO A PASO)
+Paso 1: Navegacion y Barra Lateral
+  - Abrir la aplicacion en el navegador.
+  - Mostrar la barra lateral colapsable: pulsar el icono de fuego para contraer
+    a modo compacto de iconos y volver a expandir con animacion fluida.
+Paso 2: Busqueda y Filtros en Tiempo Real
+  - Escribir un juego en la barra de busqueda (ej: "Witcher", "Batman", "Borderlands").
+  - Mostrar la busqueda instantanea con debounce (sin recargar la pagina).
+  - Aplicar un filtro de tienda (ej: Steam) y descuento minimo (ej: 50%).
+Paso 3: Ficha Detallada del Juego y Tabla Comparativa
+  - Entrar al detalle de un juego.
+  - Mostrar la presentacion de portada con efecto de desenfoque ambiental.
+  - Mostrar la Tabla Comparativa Multi-Tienda con las 4 tiendas oficiales
+    ordenadas del precio mas bajo al mas alto.
+  - Mostrar el boton "Actualizar Precios en Vivo" y explicar la revalidacion.
+Paso 4: Wishlist y Alertas de Precios
+  - Iniciar sesion con cuenta de Google o credenciales locales.
+  - Anadir un juego a la Wishlist fijando un precio objetivo.
+  - Ir a "Mi Wishlist" para mostrar el seguimiento del precio actual vs meta.
+Paso 5: Panel de Administracion (Sincronizador API)
+  - Mostrar que solo la cuenta de Administrador tiene acceso a la seccion.
+  - Explicar las opciones de sincronizacion: Lote de 60 juegos, Lote masivo de
+    300 juegos y el boton de Depuracion de Ofertas Caducadas.
+
+[12:00 - 13:30] CONCLUSIONES Y CIERRE
+* Resumen del exito del proyecto: Se creo una plataforma funcional, rapida y
+  segura cumpliendo todas las restricciones de arquitectura y presupuesto cero.
+* Espacio abierto para preguntas del jurado.
+
+
+================================================================================
+PARTE 3: PREGUNTAS FRECUENTES DEL JURADO / PROFESOR Y RESPUESTAS TECNICAS
+================================================================================
+
+P1: ¿Por que usaron Go y no Node.js o Python?
+R1: Por dos razones fundamentales:
+    1. Cumplimiento estricto del requerimiento academico de tres lenguajes
+       distintos y cero Python.
+    2. Rendimiento y consumo de recursos: Go compila a codigo maquina nativo
+       con un uso de memoria minimo (~25 MB frente a ~150 MB de Node/Python),
+       lo que permite operar con holgura dentro del limite de 512 MB de Render Free.
+
+P2: ¿Como manejan la concurrencia y posibles condiciones de carrera en la base de datos?
+R2: Empleamos transacciones ACID en PostgreSQL (BEGIN, COMMIT, ROLLBACK) y
+    clausulas ON CONFLICT (game_id, store_id) DO UPDATE. Esto garantiza que
+    actualizaciones simultaneas nunca corrompan los datos ni generen duplicados.
+
+P3: ¿Por que estructurar la base de datos en 3NF y no en una base de datos NoSQL?
+R3: En sistemas donde se gestionan precios y dinero, la redundancia de datos
+    es peligrosa. Si el nombre de una tienda cambia o un juego se actualiza,
+    en NoSQL habria que modificar miles de documentos desnormalizados. En 3NF,
+    cada dato tiene una unica fuente de verdad y se propaga con llaves foraneas.
+
+P4: ¿Como solucionaron el problema del arranque en frio (Cold Start) de Render?
+R4: Disenamos un contexto global en React (ServerStatusContext) que monitorea
+    el endpoint /health del backend. Si el servidor esta despertando del reposo,
+    la aplicacion muestra un banner informativo no intrusivo y reintenta
+    automaticamente con retroceso exponencial, evitando errores al usuario.
+
+P5: ¿Como se garantiza la seguridad en la autenticacion con Google?
+R5: El frontend obtiene un ID Token firmado criptograficamente por Google.
+    Este token se envia al backend en Go, el cual consulta directamente la API
+    de validacion de Google (oauth2.googleapis.com/tokeninfo). Nunca se confia
+    en los datos directos del cliente sin verificacion previa del servidor.
+
+================================================================================
+                  FIN DEL DOCUMENTO DE SUSTENTACION
+================================================================================

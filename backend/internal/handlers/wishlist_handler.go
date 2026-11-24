@@ -11,14 +11,19 @@ import (
 
 	"price-tracker-backend/internal/middleware"
 	"price-tracker-backend/internal/models"
+	"price-tracker-backend/internal/services"
 )
 
 type WishlistHandler struct {
-	db *sql.DB
+	db          *sql.DB
+	syncService *services.SyncService
 }
 
-func NewWishlistHandler(db *sql.DB) *WishlistHandler {
-	return &WishlistHandler{db: db}
+func NewWishlistHandler(db *sql.DB, syncService *services.SyncService) *WishlistHandler {
+	return &WishlistHandler{
+		db:          db,
+		syncService: syncService,
+	}
 }
 
 // GetWishlist lista los juegos en la lista de deseos del usuario con su mejor precio actual
@@ -127,18 +132,19 @@ func (h *WishlistHandler) AddToWishlist(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Verificar si el precio actual ya cumple el objetivo para disparar una alerta instantánea
-	var bestPrice float64
-	var storeName, gameTitle string
+	var bestPrice, discountPct float64
+	var storeName, gameTitle, gameSlug, productURL, userEmail, userName string
 	err = h.db.QueryRowContext(r.Context(), `
-		SELECT cp.current_price, st.name, g.title
+		SELECT cp.current_price, cp.discount_percentage, st.name, g.title, g.slug, sp.product_url, u.email, u.username
 		FROM store_products sp
 		JOIN current_prices cp ON cp.store_product_id = sp.id
 		JOIN stores st ON st.id = sp.store_id
 		JOIN games g ON g.id = sp.game_id
+		JOIN users u ON u.id = $2
 		WHERE sp.game_id = $1 AND st.is_active = true
 		ORDER BY cp.current_price ASC
 		LIMIT 1;
-	`, req.GameID).Scan(&bestPrice, &storeName, &gameTitle)
+	`, req.GameID, userID).Scan(&bestPrice, &discountPct, &storeName, &gameTitle, &gameSlug, &productURL, &userEmail, &userName)
 
 	if err == nil && bestPrice <= req.TargetPrice {
 		var countExisting int
@@ -150,10 +156,16 @@ func (h *WishlistHandler) AddToWishlist(w http.ResponseWriter, r *http.Request) 
 
 		if countExisting == 0 {
 			msg := fmt.Sprintf("¡%s ya está a solo $%.2f en %s (por debajo de tu objetivo de $%.2f)!", gameTitle, bestPrice, storeName, req.TargetPrice)
-			_, _ = h.db.ExecContext(r.Context(), `
-				INSERT INTO price_alerts (wishlist_id, store_name, triggered_price, message, is_read, triggered_at)
-				VALUES ($1, $2, $3, $4, false, NOW());
-			`, wishlistID, storeName, bestPrice, msg)
+			var alertID int
+			errAlert := h.db.QueryRowContext(r.Context(), `
+				INSERT INTO price_alerts (wishlist_id, store_name, triggered_price, message, is_read, email_sent, triggered_at)
+				VALUES ($1, $2, $3, $4, false, false, NOW())
+				RETURNING id;
+			`, wishlistID, storeName, bestPrice, msg).Scan(&alertID)
+
+			if errAlert == nil && alertID > 0 && h.syncService != nil {
+				h.syncService.SendSingleAlertEmailAsync(alertID, userEmail, userName, gameTitle, gameSlug, storeName, bestPrice, req.TargetPrice, discountPct, productURL)
+			}
 		}
 	}
 

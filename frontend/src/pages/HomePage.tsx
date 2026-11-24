@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useTransition } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { Game, Store } from '../types';
+import { Game, Genre, Publisher, Store } from '../types';
 import { GameCard } from '../components/GameCard';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -12,14 +13,19 @@ import {
   Percent,
   DollarSign,
   Store as StoreIcon,
+  Tag,
+  Building2,
   RotateCcw,
   X,
 } from 'lucide-react';
 
 export const HomePage: React.FC = () => {
   const { isAuthenticated } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [games, setGames] = useState<Game[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
+  const [genres, setGenres] = useState<Genre[]>([]);
+  const [publishers, setPublishers] = useState<Publisher[]>([]);
   const [wishlistIds, setWishlistIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState<boolean>(true);
   const [total, setTotal] = useState<number>(0);
@@ -29,11 +35,15 @@ export const HomePage: React.FC = () => {
   const [search, setSearch] = useState<string>('');
   const [debouncedSearch, setDebouncedSearch] = useState<string>('');
   const [selectedStore, setSelectedStore] = useState<string>('');
+  const [selectedGenre, setSelectedGenre] = useState<string>(() => searchParams.get('genre') || '');
+  const [selectedPublisher, setSelectedPublisher] = useState<string>(() => searchParams.get('publisher') || '');
   const [minDiscount, setMinDiscount] = useState<number | undefined>(undefined);
   const [maxPrice, setMaxPrice] = useState<number | undefined>(undefined);
   const [sort, setSort] = useState<string>('discount');
   const [page, setPage] = useState<number>(1);
-  const [showFilters, setShowFilters] = useState<boolean>(false);
+  const [showFilters, setShowFilters] = useState<boolean>(
+    () => Boolean(searchParams.get('genre') || searchParams.get('publisher'))
+  );
 
   const [, startTransition] = useTransition();
 
@@ -48,13 +58,37 @@ export const HomePage: React.FC = () => {
     return () => clearTimeout(handler);
   }, [search]);
 
-  // Cargar lista de tiendas al montar
+  // Cargar listas de tiendas, géneros y publishers al montar
   useEffect(() => {
     api
       .getStores()
       .then(setStores)
       .catch((err) => console.warn('No se pudieron cargar las tiendas:', err));
+    api
+      .getGenres()
+      .then(setGenres)
+      .catch((err) => console.warn('No se pudieron cargar los géneros:', err));
+    api
+      .getPublishers()
+      .then(setPublishers)
+      .catch((err) => console.warn('No se pudieron cargar los publishers:', err));
   }, []);
+
+  // Sincronizar si cambian los query params de URL (ej. clic en género/publisher desde ficha de juego)
+  useEffect(() => {
+    const urlGenre = searchParams.get('genre') || '';
+    const urlPub = searchParams.get('publisher') || '';
+    if (urlGenre && urlGenre !== selectedGenre) {
+      setSelectedGenre(urlGenre);
+      setShowFilters(true);
+      setPage(1);
+    }
+    if (urlPub && urlPub !== selectedPublisher) {
+      setSelectedPublisher(urlPub);
+      setShowFilters(true);
+      setPage(1);
+    }
+  }, [searchParams]);
 
   // Cargar lista de IDs en lista de deseos del usuario
   const loadWishlistIds = async () => {
@@ -81,6 +115,8 @@ export const HomePage: React.FC = () => {
       const res = await api.getGames({
         search: debouncedSearch || undefined,
         store: selectedStore || undefined,
+        genre: selectedGenre || undefined,
+        publisher: selectedPublisher || undefined,
         min_discount: minDiscount,
         max_price: maxPrice,
         sort,
@@ -100,21 +136,28 @@ export const HomePage: React.FC = () => {
 
   useEffect(() => {
     fetchGames();
-  }, [debouncedSearch, selectedStore, minDiscount, maxPrice, sort, page]);
+  }, [debouncedSearch, selectedStore, selectedGenre, selectedPublisher, minDiscount, maxPrice, sort, page]);
 
   const resetFilters = () => {
     setSearch('');
     setDebouncedSearch('');
     setSelectedStore('');
+    setSelectedGenre('');
+    setSelectedPublisher('');
     setMinDiscount(undefined);
     setMaxPrice(undefined);
     setSort('discount');
     setPage(1);
+    if (searchParams.has('genre') || searchParams.has('publisher')) {
+      setSearchParams({});
+    }
   };
 
   const hasActiveFilters =
     Boolean(debouncedSearch) ||
     Boolean(selectedStore) ||
+    Boolean(selectedGenre) ||
+    Boolean(selectedPublisher) ||
     minDiscount !== undefined ||
     maxPrice !== undefined ||
     sort !== 'discount';
@@ -194,7 +237,7 @@ export const HomePage: React.FC = () => {
 
         {/* Panel Desplegable de Filtros */}
         {showFilters && (
-          <div className="mt-4 pt-4 border-t border-slate-800 grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="mt-4 pt-4 border-t border-slate-800 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {/* Filtro de Tienda */}
             <div>
               <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
@@ -212,6 +255,50 @@ export const HomePage: React.FC = () => {
                 {stores.map((s) => (
                   <option key={s.id} value={s.external_store_id}>
                     {s.name} ({s.deals_count} ofertas)
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Filtro de Género */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                <Tag className="w-3.5 h-3.5 text-brand-300" /> Género
+              </label>
+              <select
+                value={selectedGenre}
+                onChange={(e) => {
+                  setSelectedGenre(e.target.value);
+                  setPage(1);
+                }}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-brand-500"
+              >
+                <option value="">Todos los géneros</option>
+                {genres.map((g) => (
+                  <option key={g.id} value={g.slug}>
+                    {g.name} ({g.games_count ?? 0} juegos)
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Filtro de Publisher / Distribuidor */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                <Building2 className="w-3.5 h-3.5 text-brand-300" /> Distribuidor / Publisher
+              </label>
+              <select
+                value={selectedPublisher}
+                onChange={(e) => {
+                  setSelectedPublisher(e.target.value);
+                  setPage(1);
+                }}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-brand-500"
+              >
+                <option value="">Todos los distribuidores</option>
+                {publishers.map((p) => (
+                  <option key={p.id} value={p.slug}>
+                    {p.name} ({p.games_count ?? 0} juegos)
                   </option>
                 ))}
               </select>
@@ -281,7 +368,7 @@ export const HomePage: React.FC = () => {
 
             {/* Botón Restaurar Filtros */}
             {hasActiveFilters && (
-              <div className="sm:col-span-3 flex justify-end">
+              <div className="sm:col-span-2 lg:col-span-3 flex justify-end">
                 <button
                   onClick={resetFilters}
                   className="inline-flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 font-medium py-1 px-2 rounded hover:bg-rose-950/30 transition"
@@ -310,6 +397,22 @@ export const HomePage: React.FC = () => {
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-800 text-slate-200 border border-slate-700">
                 Tienda: {stores.find((s) => s.external_store_id === selectedStore)?.name || selectedStore}
                 <button onClick={() => { setSelectedStore(''); setPage(1); }} className="hover:text-rose-400 ml-0.5">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+            {selectedGenre && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-800 text-slate-200 border border-slate-700">
+                Género: {genres.find((g) => g.slug === selectedGenre)?.name || selectedGenre}
+                <button onClick={() => { setSelectedGenre(''); setPage(1); }} className="hover:text-rose-400 ml-0.5">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+            {selectedPublisher && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-800 text-slate-200 border border-slate-700">
+                Publisher: {publishers.find((p) => p.slug === selectedPublisher)?.name || selectedPublisher}
+                <button onClick={() => { setSelectedPublisher(''); setPage(1); }} className="hover:text-rose-400 ml-0.5">
                   <X className="w-3 h-3" />
                 </button>
               </span>

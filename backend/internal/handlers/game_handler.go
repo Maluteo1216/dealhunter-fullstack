@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/lib/pq"
 
 	"price-tracker-backend/internal/models"
 	"price-tracker-backend/internal/services"
@@ -47,6 +48,8 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	search := strings.TrimSpace(query.Get("search"))
 	storeParam := strings.TrimSpace(query.Get("store"))
+	genreParam := strings.TrimSpace(query.Get("genre"))
+	publisherParam := strings.TrimSpace(query.Get("publisher"))
 	minDiscountStr := strings.TrimSpace(query.Get("min_discount"))
 	maxPriceStr := strings.TrimSpace(query.Get("max_price"))
 	sortParam := strings.TrimSpace(query.Get("sort"))
@@ -103,6 +106,24 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 		argIdx++
 	}
 
+	// Filtro por género (slug o ID)
+	if genreParam != "" {
+		gameWhereClauses = append(gameWhereClauses, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM game_genres gg
+			INNER JOIN genres ge ON ge.id = gg.genre_id
+			WHERE gg.game_id = g.id AND (ge.slug = $%d OR CAST(ge.id AS TEXT) = $%d)
+		)`, argIdx, argIdx))
+		args = append(args, genreParam)
+		argIdx++
+	}
+
+	// Filtro por publisher / distribuidor (slug o ID)
+	if publisherParam != "" {
+		gameWhereClauses = append(gameWhereClauses, fmt.Sprintf("(p.slug = $%d OR CAST(p.id AS TEXT) = $%d)", argIdx, argIdx))
+		args = append(args, publisherParam)
+		argIdx++
+	}
+
 	dealWhereSQL := ""
 	if len(dealWhereClauses) > 0 {
 		dealWhereSQL = " AND " + strings.Join(dealWhereClauses, " AND ")
@@ -142,11 +163,13 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 		)
 		SELECT 
 			g.id, g.title, g.slug, COALESCE(g.description, ''), COALESCE(g.cover_image_url, ''),
-			COALESCE(g.steam_app_id, ''), g.historical_low_price, g.historical_low_date, g.created_at,
+			COALESCE(g.steam_app_id, ''), g.publisher_id, COALESCE(p.name, ''), COALESCE(p.slug, ''),
+			g.historical_low_price, g.historical_low_date, g.created_at,
 			rd.store_id, rd.store_name, rd.store_slug, rd.store_logo, rd.regular_price, 
 			rd.current_price, rd.discount_percentage, rd.product_url, rd.external_deal_id,
 			COALESCE((SELECT COUNT(DISTINCT spc.store_id) FROM store_products spc WHERE spc.game_id = g.id), 0) AS stores_count
 		FROM games g
+		LEFT JOIN publishers p ON p.id = g.publisher_id
 		%s ranked_deals rd ON rd.game_id = g.id AND rd.rank = 1
 		%s
 	`, dealWhereSQL, joinType, gameWhereSQL)
@@ -191,8 +214,10 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	games := make([]models.Game, 0)
+	gameIDs := make([]int, 0)
 	for rows.Next() {
 		var g models.Game
+		var pubID sql.NullInt64
 		var histLow sql.NullFloat64
 		var histDate sql.NullTime
 		var stID sql.NullInt64
@@ -201,7 +226,8 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 
 		err := rows.Scan(
 			&g.ID, &g.Title, &g.Slug, &g.Description, &g.CoverImageURL,
-			&g.SteamAppID, &histLow, &histDate, &g.CreatedAt,
+			&g.SteamAppID, &pubID, &g.PublisherName, &g.PublisherSlug,
+			&histLow, &histDate, &g.CreatedAt,
 			&stID, &stName, &stSlug, &stLogo, &regPrice,
 			&curPrice, &discPerc, &prodURL, &extDealID,
 			&g.StoresCount,
@@ -210,6 +236,10 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		if pubID.Valid {
+			pid := int(pubID.Int64)
+			g.PublisherID = &pid
+		}
 		if histLow.Valid {
 			hl := histLow.Float64
 			g.HistoricalLowPrice = &hl
@@ -240,6 +270,34 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 		}
 
 		games = append(games, g)
+		gameIDs = append(gameIDs, g.ID)
+	}
+
+	// Cargar géneros en lote para los videojuegos de esta página
+	if len(gameIDs) > 0 {
+		genreRows, gErr := h.db.QueryContext(r.Context(), `
+			SELECT gg.game_id, ge.id, ge.name, ge.slug
+			FROM game_genres gg
+			INNER JOIN genres ge ON ge.id = gg.genre_id
+			WHERE gg.game_id = ANY($1)
+			ORDER BY ge.name ASC;
+		`, pq.Array(gameIDs))
+		if gErr == nil {
+			genresByGame := make(map[int][]models.Genre)
+			for genreRows.Next() {
+				var gid int
+				var ge models.Genre
+				if err := genreRows.Scan(&gid, &ge.ID, &ge.Name, &ge.Slug); err == nil {
+					genresByGame[gid] = append(genresByGame[gid], ge)
+				}
+			}
+			genreRows.Close()
+			for i := range games {
+				if list, ok := genresByGame[games[i].ID]; ok {
+					games[i].Genres = list
+				}
+			}
+		}
 	}
 
 	totalPages := 0
@@ -275,20 +333,20 @@ func (h *GameHandler) GetGameBySlug(w http.ResponseWriter, r *http.Request) {
 
 	var g models.Game
 	var pubID sql.NullInt64
-	var pubName sql.NullString
+	var pubName, pubSlug sql.NullString
 	var histLow sql.NullFloat64
 	var histDate sql.NullTime
 
 	err := h.db.QueryRowContext(r.Context(), `
 		SELECT g.id, g.title, g.slug, COALESCE(g.description, ''), COALESCE(g.cover_image_url, ''),
-		       COALESCE(g.steam_app_id, ''), g.publisher_id, p.name, g.historical_low_price,
+		       COALESCE(g.steam_app_id, ''), g.publisher_id, p.name, p.slug, g.historical_low_price,
 		       g.historical_low_date, g.created_at
 		FROM games g
 		LEFT JOIN publishers p ON p.id = g.publisher_id
 		WHERE g.slug = $1;
 	`, slug).Scan(
 		&g.ID, &g.Title, &g.Slug, &g.Description, &g.CoverImageURL,
-		&g.SteamAppID, &pubID, &pubName, &histLow, &histDate, &g.CreatedAt,
+		&g.SteamAppID, &pubID, &pubName, &pubSlug, &histLow, &histDate, &g.CreatedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -305,6 +363,7 @@ func (h *GameHandler) GetGameBySlug(w http.ResponseWriter, r *http.Request) {
 		pid := int(pubID.Int64)
 		g.PublisherID = &pid
 		g.PublisherName = pubName.String
+		g.PublisherSlug = pubSlug.String
 	}
 	if histLow.Valid {
 		hl := histLow.Float64
@@ -404,10 +463,59 @@ func (h *GameHandler) GetGameBySlug(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 2. Obtener historial cronológico de precios para la gráfica interactiva (Recharts)
+	// 2. Cargar géneros y verificar si falta enriquecer metadatos (géneros o publisher) en vivo
+	loadGenres := func(gameID int) []models.Genre {
+		list := make([]models.Genre, 0)
+		gRows, gErr := h.db.QueryContext(r.Context(), `
+			SELECT ge.id, ge.name, ge.slug
+			FROM game_genres gg
+			INNER JOIN genres ge ON ge.id = gg.genre_id
+			WHERE gg.game_id = $1
+			ORDER BY ge.name ASC;
+		`, gameID)
+		if gErr == nil {
+			defer gRows.Close()
+			for gRows.Next() {
+				var ge models.Genre
+				if err := gRows.Scan(&ge.ID, &ge.Name, &ge.Slug); err == nil {
+					list = append(list, ge)
+				}
+			}
+		}
+		return list
+	}
+
+	g.Genres = loadGenres(g.ID)
+
+	if (g.PublisherID == nil || len(g.Genres) == 0) && h.syncService != nil {
+		var firstDealID string
+		if len(currentPrices) > 0 {
+			firstDealID = currentPrices[0].ExternalDealID
+		}
+		_ = h.syncService.EnrichGameMetadata(r.Context(), g.ID, g.SteamAppID, firstDealID)
+
+		// Recargar publisher y géneros tras el enriquecimiento
+		var newPubID sql.NullInt64
+		var newPubName, newPubSlug sql.NullString
+		_ = h.db.QueryRowContext(r.Context(), `
+			SELECT g.publisher_id, p.name, p.slug
+			FROM games g
+			LEFT JOIN publishers p ON p.id = g.publisher_id
+			WHERE g.id = $1;
+		`, g.ID).Scan(&newPubID, &newPubName, &newPubSlug)
+		if newPubID.Valid {
+			pid := int(newPubID.Int64)
+			g.PublisherID = &pid
+			g.PublisherName = newPubName.String
+			g.PublisherSlug = newPubSlug.String
+		}
+		g.Genres = loadGenres(g.ID)
+	}
+
+	// 3. Obtener historial cronológico de precios para la gráfica interactiva (Keepa / Recharts)
 	rowsHistory, err := h.db.QueryContext(r.Context(), `
 		SELECT 
-			st.name, st.logo_url, ph.regular_price, ph.sale_price,
+			st.name, st.slug, st.logo_url, ph.regular_price, ph.sale_price,
 			ph.discount_percentage, ph.recorded_at
 		FROM price_history ph
 		INNER JOIN store_products sp ON sp.id = ph.store_product_id
@@ -422,7 +530,7 @@ func (h *GameHandler) GetGameBySlug(w http.ResponseWriter, r *http.Request) {
 		for rowsHistory.Next() {
 			var pt models.PriceHistoryPoint
 			if err := rowsHistory.Scan(
-				&pt.StoreName, &pt.StoreLogo, &pt.RegularPrice, &pt.SalePrice,
+				&pt.StoreName, &pt.StoreSlug, &pt.StoreLogo, &pt.RegularPrice, &pt.SalePrice,
 				&pt.DiscountPercentage, &pt.RecordedAt,
 			); err == nil {
 				priceHistory = append(priceHistory, pt)
@@ -435,6 +543,7 @@ func (h *GameHandler) GetGameBySlug(w http.ResponseWriter, r *http.Request) {
 		for _, cp := range currentPrices {
 			priceHistory = append(priceHistory, models.PriceHistoryPoint{
 				StoreName:          cp.StoreName,
+				StoreSlug:          cp.StoreSlug,
 				StoreLogo:          cp.StoreLogo,
 				RegularPrice:       cp.RegularPrice,
 				SalePrice:          cp.CurrentPrice,
@@ -473,12 +582,27 @@ func (h *GameHandler) CreateGame(w http.ResponseWriter, r *http.Request) {
 		slug = services.CleanSlug(req.Title)
 	}
 
+	var publisherID *int
+	if strings.TrimSpace(req.PublisherName) != "" {
+		pubName := strings.TrimSpace(req.PublisherName)
+		pubSlug := services.CleanSlug(pubName)
+		var pid int
+		if errPub := h.db.QueryRowContext(r.Context(), `
+			INSERT INTO publishers (name, slug)
+			VALUES ($1, $2)
+			ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
+			RETURNING id;
+		`, pubName, pubSlug).Scan(&pid); errPub == nil && pid > 0 {
+			publisherID = &pid
+		}
+	}
+
 	var gameID int
 	err := h.db.QueryRowContext(r.Context(), `
-		INSERT INTO games (title, slug, description, cover_image_url, steam_app_id, historical_low_price, historical_low_date, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+		INSERT INTO games (title, slug, description, cover_image_url, steam_app_id, publisher_id, historical_low_price, historical_low_date, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
 		RETURNING id;
-	`, req.Title, slug, req.Description, req.CoverImageURL, req.SteamAppID, req.CurrentPrice).Scan(&gameID)
+	`, req.Title, slug, req.Description, req.CoverImageURL, req.SteamAppID, publisherID, req.CurrentPrice).Scan(&gameID)
 
 	if err != nil {
 		w.WriteHeader(http.StatusConflict)
@@ -572,6 +696,54 @@ func (h *GameHandler) UpdatePrice(w http.ResponseWriter, r *http.Request) {
 		INSERT INTO price_history (store_product_id, regular_price, sale_price, discount_percentage, recorded_at)
 		VALUES ($1, $2, $3, $4, NOW());
 	`, storeProductID, req.RegularPrice, req.CurrentPrice, disc)
+
+	// Evaluar Wishlists y disparar alertas + correos electrónicos si alcanza algún precio objetivo
+	var gameID int
+	var gameTitle, gameSlug, storeName, productURL string
+	errMeta := h.db.QueryRowContext(r.Context(), `
+		SELECT g.id, g.title, g.slug, st.name, sp.product_url
+		FROM store_products sp
+		INNER JOIN games g ON g.id = sp.game_id
+		INNER JOIN stores st ON st.id = sp.store_id
+		WHERE sp.id = $1;
+	`, storeProductID).Scan(&gameID, &gameTitle, &gameSlug, &storeName, &productURL)
+
+	if errMeta == nil {
+		rowsW, errW := h.db.QueryContext(r.Context(), `
+			SELECT w.id, w.target_price, u.email, u.username
+			FROM wishlists w
+			INNER JOIN users u ON u.id = w.user_id
+			WHERE w.game_id = $1 AND w.notify_active = true AND w.target_price >= $2;
+		`, gameID, req.CurrentPrice)
+		if errW == nil {
+			defer rowsW.Close()
+			for rowsW.Next() {
+				var wid int
+				var tp float64
+				var uEmail, uName string
+				if errS := rowsW.Scan(&wid, &tp, &uEmail, &uName); errS == nil {
+					var cnt int
+					_ = h.db.QueryRowContext(r.Context(), `
+						SELECT COUNT(*) FROM price_alerts 
+						WHERE wishlist_id = $1 AND store_name = $2 AND triggered_price = $3 AND triggered_at > NOW() - INTERVAL '24 hours';
+					`, wid, storeName, req.CurrentPrice).Scan(&cnt)
+					if cnt == 0 {
+						msg := fmt.Sprintf("¡%s está en oferta en %s por solo $%.2f (tu precio objetivo era $%.2f, -%.0f%%)!",
+							gameTitle, storeName, req.CurrentPrice, tp, disc)
+						var alertID int
+						errA := h.db.QueryRowContext(r.Context(), `
+							INSERT INTO price_alerts (wishlist_id, store_name, triggered_price, message, is_read, email_sent, triggered_at)
+							VALUES ($1, $2, $3, $4, false, false, NOW())
+							RETURNING id;
+						`, wid, storeName, req.CurrentPrice, msg).Scan(&alertID)
+						if errA == nil && alertID > 0 && h.syncService != nil {
+							h.syncService.SendSingleAlertEmailAsync(alertID, uEmail, uName, gameTitle, gameSlug, storeName, req.CurrentPrice, tp, disc, productURL)
+						}
+					}
+				}
+			}
+		}
+	}
 
 	json.NewEncoder(w).Encode(map[string]string{"message": "Precio actualizado correctamente"})
 }

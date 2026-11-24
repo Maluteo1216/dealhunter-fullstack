@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS price_alerts (
     triggered_price DECIMAL(12,2) NOT NULL,
     message TEXT NOT NULL,
     is_read BOOLEAN DEFAULT FALSE,
+    email_sent BOOLEAN DEFAULT FALSE,
     triggered_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
