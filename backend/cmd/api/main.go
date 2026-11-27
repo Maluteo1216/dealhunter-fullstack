@@ -83,10 +83,8 @@ func main() {
 
 	// Agrupación de rutas API v1
 	r.Route("/api/v1", func(api chi.Router) {
-		// Autenticación pública
-		api.Post("/auth/register", authHandler.Register)
-		api.Post("/auth/login", authHandler.Login)
-		api.Post("/auth/google", authHandler.GoogleLogin) // Login obligatorio con Google OAuth
+		// Autenticación exclusiva con Google OAuth
+		api.Post("/auth/google", authHandler.GoogleLogin)
 
 		// Catálogo, tiendas, géneros y publishers públicos
 		api.Get("/games", gameHandler.GetGames)

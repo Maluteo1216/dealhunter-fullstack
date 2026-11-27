@@ -3,7 +3,6 @@ import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { GameDetail } from '../types';
 import { StoreTable } from '../components/StoreTable';
-import { PriceHistoryChart } from '../components/PriceHistoryChart';
 import { useAuth } from '../context/AuthContext';
 import {
   ArrowLeft,
@@ -403,13 +402,6 @@ export const GameDetailPage: React.FC = () => {
           historicalLowPrice={game.historical_low_price}
         />
       </div>
-
-      {/* Gráfica de Historial de Precios (Estilo Keepa) */}
-      <PriceHistoryChart
-        priceHistory={detail.price_history}
-        currentPrices={current_prices}
-        historicalLowPrice={game.historical_low_price}
-      />
     </div>
   );
 };
