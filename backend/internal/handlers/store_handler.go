@@ -33,7 +33,7 @@ func (h *StoreHandler) GetStores(w http.ResponseWriter, r *http.Request) {
 			COUNT(sp.id) as deals_count
 		FROM stores s
 		LEFT JOIN store_products sp ON sp.store_id = s.id
-		WHERE s.is_active = true
+		WHERE s.is_active = true AND s.external_store_id IN ('1', '25', '7', '11')
 		GROUP BY s.id, s.external_store_id, s.name, s.slug, s.base_url, s.logo_url, s.is_active
 		ORDER BY deals_count DESC, s.name ASC;
 	`)

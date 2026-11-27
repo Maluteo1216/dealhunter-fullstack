@@ -58,11 +58,12 @@ export const HomePage: React.FC = () => {
     return () => clearTimeout(handler);
   }, [search]);
 
-  // Cargar listas de tiendas, géneros y publishers al montar
+  // Cargar listas de tiendas (solo Steam, Epic, GOG y Humble), géneros y publishers al montar
   useEffect(() => {
+    const allowedStoreIds = new Set(['1', '25', '7', '11']);
     api
       .getStores()
-      .then(setStores)
+      .then((data) => setStores(data.filter((s) => allowedStoreIds.has(s.external_store_id))))
       .catch((err) => console.warn('No se pudieron cargar las tiendas:', err));
     api
       .getGenres()

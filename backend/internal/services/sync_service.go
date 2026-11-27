@@ -34,65 +34,43 @@ var AllowedStoreIDs = map[string]bool{
 const AllowedStoreIDsParam = "1,25,7,11"
 
 type SyncService struct {
-	db           *sql.DB
-	emailService *EmailService
+	db *sql.DB
 }
 
-func NewSyncService(db *sql.DB, emailService *EmailService) *SyncService {
-	return &SyncService{
-		db:           db,
-		emailService: emailService,
-	}
+func NewSyncService(db *sql.DB) *SyncService {
+	return &SyncService{db: db}
 }
 
-type pendingAlertEmail struct {
-	alertID     int
-	toEmail     string
-	username    string
-	gameTitle   string
-	gameSlug    string
-	storeName   string
-	salePrice   float64
-	targetPrice float64
-	savings     float64
-	productURL  string
-}
-
-// collectAndInsertWishlistAlerts busca wishlists que cumplan con el precio objetivo, registra en price_alerts y retorna correos pendientes
+// collectAndInsertWishlistAlerts busca wishlists que cumplan con el precio objetivo y registra alertas en price_alerts
 func (s *SyncService) collectAndInsertWishlistAlerts(
 	ctx context.Context,
 	tx *sql.Tx,
 	gameID int,
-	gameTitle, gameSlug, storeName string,
+	gameTitle, storeName string,
 	salePrice, savings float64,
-	productURL string,
-) []pendingAlertEmail {
+) {
 	rowsW, err := tx.QueryContext(ctx, `
-		SELECT w.id, w.target_price, u.email, u.username
+		SELECT w.id, w.target_price
 		FROM wishlists w
-		INNER JOIN users u ON u.id = w.user_id
 		WHERE w.game_id = $1 AND w.notify_active = true AND w.target_price >= $2;
 	`, gameID, salePrice)
 	if err != nil {
-		return nil
+		return
 	}
 
 	type wishMatch struct {
 		wishlistID  int
 		targetPrice float64
-		email       string
-		username    string
 	}
 	var matches []wishMatch
 	for rowsW.Next() {
 		var m wishMatch
-		if err := rowsW.Scan(&m.wishlistID, &m.targetPrice, &m.email, &m.username); err == nil {
+		if err := rowsW.Scan(&m.wishlistID, &m.targetPrice); err == nil {
 			matches = append(matches, m)
 		}
 	}
 	rowsW.Close()
 
-	var pending []pendingAlertEmail
 	for _, m := range matches {
 		var countAlerts int
 		_ = tx.QueryRowContext(ctx, `
@@ -105,109 +83,12 @@ func (s *SyncService) collectAndInsertWishlistAlerts(
 			alertMsg := fmt.Sprintf("¡%s está en oferta en %s por solo $%.2f (tu precio objetivo era $%.2f, -%.0f%%)!",
 				gameTitle, storeName, salePrice, m.targetPrice, savings)
 
-			var alertID int
-			errIns := tx.QueryRowContext(ctx, `
-				INSERT INTO price_alerts (wishlist_id, store_name, triggered_price, message, is_read, email_sent, triggered_at)
-				VALUES ($1, $2, $3, $4, false, false, NOW())
-				RETURNING id;
-			`, m.wishlistID, storeName, salePrice, alertMsg).Scan(&alertID)
-
-			if errIns == nil && alertID > 0 {
-				pending = append(pending, pendingAlertEmail{
-					alertID:     alertID,
-					toEmail:     m.email,
-					username:    m.username,
-					gameTitle:   gameTitle,
-					gameSlug:    gameSlug,
-					storeName:   storeName,
-					salePrice:   salePrice,
-					targetPrice: m.targetPrice,
-					savings:     savings,
-					productURL:  productURL,
-				})
-			}
+			_, _ = tx.ExecContext(ctx, `
+				INSERT INTO price_alerts (wishlist_id, store_name, triggered_price, message, is_read, triggered_at)
+				VALUES ($1, $2, $3, $4, false, NOW());
+			`, m.wishlistID, storeName, salePrice, alertMsg)
 		}
 	}
-	return pending
-}
-
-// DispatchAlertEmailsAsync envía correos en segundo plano sin bloquear las peticiones HTTP
-func (s *SyncService) DispatchAlertEmailsAsync(items []pendingAlertEmail) {
-	if len(items) == 0 || s.emailService == nil || !s.emailService.IsConfigured() {
-		return
-	}
-
-	go func(alerts []pendingAlertEmail) {
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-		defer cancel()
-
-		for _, it := range alerts {
-			err := s.emailService.SendPriceAlertEmail(
-				it.toEmail,
-				it.username,
-				it.gameTitle,
-				it.gameSlug,
-				it.storeName,
-				it.salePrice,
-				it.targetPrice,
-				it.savings,
-				it.productURL,
-			)
-			if err == nil && s.db != nil {
-				_, _ = s.db.ExecContext(ctx, `UPDATE price_alerts SET email_sent = true WHERE id = $1;`, it.alertID)
-			}
-		}
-	}(items)
-}
-
-// SendSingleAlertEmailAsync permite a otros handlers (ej. WishlistHandler, GameHandler) despachar correo por una alerta recién creada
-func (s *SyncService) SendSingleAlertEmailAsync(alertID int, toEmail, username, gameTitle, gameSlug, storeName string, triggeredPrice, targetPrice, discountPct float64, productURL string) {
-	s.DispatchAlertEmailsAsync([]pendingAlertEmail{{
-		alertID:     alertID,
-		toEmail:     toEmail,
-		username:    username,
-		gameTitle:   gameTitle,
-		gameSlug:    gameSlug,
-		storeName:   storeName,
-		salePrice:   triggeredPrice,
-		targetPrice: targetPrice,
-		savings:     discountPct,
-		productURL:  productURL,
-	}})
-}
-
-// SendWishlistConfirmationEmailAsync envía un correo de confirmación al agregar un juego con precio objetivo inferior al actual
-func (s *SyncService) SendWishlistConfirmationEmailAsync(toEmail, username, gameTitle, gameSlug, storeName string, currentPrice, targetPrice float64) {
-	if s.emailService == nil || !s.emailService.IsConfigured() {
-		return
-	}
-	go func() {
-		_ = s.emailService.SendWishlistConfirmationEmail(toEmail, username, gameTitle, gameSlug, storeName, currentPrice, targetPrice)
-	}()
-}
-
-// SendSingleAlertEmailNow envía un correo de alerta de forma síncrona (con timeout del transporte) y retorna el resultado
-func (s *SyncService) SendSingleAlertEmailNow(ctx context.Context, alertID int, toEmail, username, gameTitle, gameSlug, storeName string, triggeredPrice, targetPrice, discountPct float64, productURL string) error {
-	if s.emailService == nil {
-		return fmt.Errorf("servicio de correo no inicializado")
-	}
-	err := s.emailService.SendPriceAlertEmail(toEmail, username, gameTitle, gameSlug, storeName, triggeredPrice, targetPrice, discountPct, productURL)
-	if err == nil && alertID > 0 && s.db != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE price_alerts SET email_sent = true WHERE id = $1;`, alertID)
-	}
-	return err
-}
-
-// SendWishlistConfirmationEmailNow envía un correo de confirmación/prueba de forma síncrona y marca email_sent en price_alerts
-func (s *SyncService) SendWishlistConfirmationEmailNow(ctx context.Context, alertID int, toEmail, username, gameTitle, gameSlug, storeName string, currentPrice, targetPrice float64) error {
-	if s.emailService == nil {
-		return fmt.Errorf("servicio de correo no inicializado")
-	}
-	err := s.emailService.SendWishlistConfirmationEmail(toEmail, username, gameTitle, gameSlug, storeName, currentPrice, targetPrice)
-	if err == nil && alertID > 0 && s.db != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE price_alerts SET email_sent = true WHERE id = $1;`, alertID)
-	}
-	return err
 }
 
 var nonAlphaNumRegex = regexp.MustCompile(`[^a-z0-9]+`)
@@ -279,7 +160,6 @@ func (s *SyncService) IngestDeals(ctx context.Context, source string, payload mo
 	var syncErr error
 	var touchedGameIDs []int
 	seenGameIDs := make(map[int]bool)
-	var allPendingEmails []pendingAlertEmail
 
 	// 1. Sincronizar Tiendas permitidas si vienen en el payload (Steam, Epic, GOG, Humble)
 	for _, store := range payload.Stores {
@@ -478,22 +358,16 @@ func (s *SyncService) IngestDeals(ctx context.Context, source string, payload mo
 		}
 
 		// F. Revisión de Wishlists y Disparo de Alertas
-		dealAlerts := s.collectAndInsertWishlistAlerts(ctx, tx, gameID, deal.Title, slug, store.Name, salePrice, savings, productURL)
+		s.collectAndInsertWishlistAlerts(ctx, tx, gameID, deal.Title, store.Name, salePrice, savings)
 
 		if err := tx.Commit(); err == nil {
 			processedCount++
-			if len(dealAlerts) > 0 {
-				allPendingEmails = append(allPendingEmails, dealAlerts...)
-			}
 			if !seenGameIDs[gameID] {
 				seenGameIDs[gameID] = true
 				touchedGameIDs = append(touchedGameIDs, gameID)
 			}
 		}
 	}
-
-	// Enviar correos de alerta fuera de la transacción
-	s.DispatchAlertEmailsAsync(allPendingEmails)
 
 	// 4. Auto-enriquecimiento integrado: si se solicita, consultar y agregar tiendas oficiales
 	// para TODOS los videojuegos que se acaban de insertar o actualizar que carezcan de tiendas prioritarias
@@ -854,8 +728,6 @@ func (s *SyncService) EnrichGameMultiStore(ctx context.Context, gameID int, exte
 		`, steamAppID, gameID)
 	}
 
-	gameSlug := CleanSlug(title)
-	var pendingEnrichEmails []pendingAlertEmail
 	dealsSaved := 0
 	for _, deal := range gameLookup.Deals {
 		salePrice, err := strconv.ParseFloat(deal.Price, 64)
@@ -945,10 +817,7 @@ func (s *SyncService) EnrichGameMultiStore(ctx context.Context, gameID int, exte
 		}
 
 		// Revisar Wishlists y disparar alertas de precio si coincide el precio objetivo
-		alertBatch := s.collectAndInsertWishlistAlerts(ctx, tx, gameID, title, gameSlug, store.Name, salePrice, savings, productURL)
-		if len(alertBatch) > 0 {
-			pendingEnrichEmails = append(pendingEnrichEmails, alertBatch...)
-		}
+		s.collectAndInsertWishlistAlerts(ctx, tx, gameID, title, store.Name, salePrice, savings)
 
 		dealsSaved++
 	}
@@ -956,8 +825,6 @@ func (s *SyncService) EnrichGameMultiStore(ctx context.Context, gameID int, exte
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
-
-	s.DispatchAlertEmailsAsync(pendingEnrichEmails)
 
 	// Enriquecer géneros y publisher si el juego aún no los tiene
 	var firstDealID string
@@ -1511,7 +1378,6 @@ func (s *SyncService) RefreshAndCleanupDeals(ctx context.Context, limit int) (in
 	client := &http.Client{Timeout: 10 * time.Second}
 	updatedCount := 0
 	deactivatedCount := 0
-	var allPendingEmails []pendingAlertEmail
 
 	for _, it := range items {
 		select {
@@ -1609,11 +1475,8 @@ func (s *SyncService) RefreshAndCleanupDeals(ctx context.Context, limit int) (in
 				`, it.spID, retailPrice, salePrice, discount)
 			}
 
-			alertBatch := s.collectAndInsertWishlistAlerts(ctx, tx, it.gameID, it.gameTitle, it.gameSlug, it.storeName, salePrice, discount, it.productURL)
+			s.collectAndInsertWishlistAlerts(ctx, tx, it.gameID, it.gameTitle, it.storeName, salePrice, discount)
 			if errCommit := tx.Commit(); errCommit == nil {
-				if len(alertBatch) > 0 {
-					allPendingEmails = append(allPendingEmails, alertBatch...)
-				}
 				if it.isOnSale && !isOnSale {
 					deactivatedCount++
 				} else {
@@ -1626,8 +1489,6 @@ func (s *SyncService) RefreshAndCleanupDeals(ctx context.Context, limit int) (in
 			tx.Rollback()
 		}
 	}
-
-	s.DispatchAlertEmailsAsync(allPendingEmails)
 
 	// Registrar en sync_logs
 	cleanupMsg := fmt.Sprintf("Mantenimiento completado: %d ofertas actualizadas, %d ofertas caducadas retiradas", updatedCount, deactivatedCount)

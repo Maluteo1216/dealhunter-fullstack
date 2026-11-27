@@ -151,7 +151,6 @@ type PriceAlert struct {
 	TargetPrice    float64   `json:"target_price"`
 	Message        string    `json:"message"`
 	IsRead         bool      `json:"is_read"`
-	EmailSent      bool      `json:"email_sent"`
 	TriggeredAt    time.Time `json:"triggered_at"`
 }
 

@@ -159,7 +159,7 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 			FROM store_products sp
 			INNER JOIN current_prices cp ON cp.store_product_id = sp.id
 			INNER JOIN stores st ON st.id = sp.store_id
-			WHERE st.is_active = true %s
+			WHERE st.is_active = true AND st.external_store_id IN ('1', '25', '7', '11') %s
 		)
 		SELECT 
 			g.id, g.title, g.slug, COALESCE(g.description, ''), COALESCE(g.cover_image_url, ''),
@@ -167,7 +167,7 @@ func (h *GameHandler) GetGames(w http.ResponseWriter, r *http.Request) {
 			g.historical_low_price, g.historical_low_date, g.created_at,
 			rd.store_id, rd.store_name, rd.store_slug, rd.store_logo, rd.regular_price, 
 			rd.current_price, rd.discount_percentage, rd.product_url, rd.external_deal_id,
-			COALESCE((SELECT COUNT(DISTINCT spc.store_id) FROM store_products spc WHERE spc.game_id = g.id), 0) AS stores_count
+			COALESCE((SELECT COUNT(DISTINCT spc.store_id) FROM store_products spc INNER JOIN stores stc ON stc.id = spc.store_id WHERE spc.game_id = g.id AND stc.external_store_id IN ('1', '25', '7', '11')), 0) AS stores_count
 		FROM games g
 		LEFT JOIN publishers p ON p.id = g.publisher_id
 		%s ranked_deals rd ON rd.game_id = g.id AND rd.rank = 1
@@ -383,7 +383,7 @@ func (h *GameHandler) GetGameBySlug(w http.ResponseWriter, r *http.Request) {
 		FROM store_products sp
 		INNER JOIN stores st ON st.id = sp.store_id
 		INNER JOIN current_prices cp ON cp.store_product_id = sp.id
-		WHERE sp.game_id = $1 AND st.is_active = true
+		WHERE sp.game_id = $1 AND st.is_active = true AND st.external_store_id IN ('1', '25', '7', '11')
 		ORDER BY cp.current_price ASC, cp.discount_percentage DESC;
 	`, g.ID)
 
@@ -443,7 +443,7 @@ func (h *GameHandler) GetGameBySlug(w http.ResponseWriter, r *http.Request) {
 				FROM store_products sp
 				INNER JOIN stores st ON st.id = sp.store_id
 				INNER JOIN current_prices cp ON cp.store_product_id = sp.id
-				WHERE sp.game_id = $1 AND st.is_active = true
+				WHERE sp.game_id = $1 AND st.is_active = true AND st.external_store_id IN ('1', '25', '7', '11')
 				ORDER BY cp.current_price ASC, cp.discount_percentage DESC;
 			`, g.ID)
 			if err2 == nil {
@@ -697,22 +697,21 @@ func (h *GameHandler) UpdatePrice(w http.ResponseWriter, r *http.Request) {
 		VALUES ($1, $2, $3, $4, NOW());
 	`, storeProductID, req.RegularPrice, req.CurrentPrice, disc)
 
-	// Evaluar Wishlists y disparar alertas + correos electrónicos si alcanza algún precio objetivo
+	// Evaluar Wishlists y disparar alertas en la página si alcanza algún precio objetivo
 	var gameID int
-	var gameTitle, gameSlug, storeName, productURL string
+	var gameTitle, storeName string
 	errMeta := h.db.QueryRowContext(r.Context(), `
-		SELECT g.id, g.title, g.slug, st.name, sp.product_url
+		SELECT g.id, g.title, st.name
 		FROM store_products sp
 		INNER JOIN games g ON g.id = sp.game_id
 		INNER JOIN stores st ON st.id = sp.store_id
 		WHERE sp.id = $1;
-	`, storeProductID).Scan(&gameID, &gameTitle, &gameSlug, &storeName, &productURL)
+	`, storeProductID).Scan(&gameID, &gameTitle, &storeName)
 
 	if errMeta == nil {
 		rowsW, errW := h.db.QueryContext(r.Context(), `
-			SELECT w.id, w.target_price, u.email, u.username
+			SELECT w.id, w.target_price
 			FROM wishlists w
-			INNER JOIN users u ON u.id = w.user_id
 			WHERE w.game_id = $1 AND w.notify_active = true AND w.target_price >= $2;
 		`, gameID, req.CurrentPrice)
 		if errW == nil {
@@ -720,8 +719,7 @@ func (h *GameHandler) UpdatePrice(w http.ResponseWriter, r *http.Request) {
 			for rowsW.Next() {
 				var wid int
 				var tp float64
-				var uEmail, uName string
-				if errS := rowsW.Scan(&wid, &tp, &uEmail, &uName); errS == nil {
+				if errS := rowsW.Scan(&wid, &tp); errS == nil {
 					var cnt int
 					_ = h.db.QueryRowContext(r.Context(), `
 						SELECT COUNT(*) FROM price_alerts 
@@ -730,15 +728,10 @@ func (h *GameHandler) UpdatePrice(w http.ResponseWriter, r *http.Request) {
 					if cnt == 0 {
 						msg := fmt.Sprintf("¡%s está en oferta en %s por solo $%.2f (tu precio objetivo era $%.2f, -%.0f%%)!",
 							gameTitle, storeName, req.CurrentPrice, tp, disc)
-						var alertID int
-						errA := h.db.QueryRowContext(r.Context(), `
-							INSERT INTO price_alerts (wishlist_id, store_name, triggered_price, message, is_read, email_sent, triggered_at)
-							VALUES ($1, $2, $3, $4, false, false, NOW())
-							RETURNING id;
-						`, wid, storeName, req.CurrentPrice, msg).Scan(&alertID)
-						if errA == nil && alertID > 0 && h.syncService != nil {
-							h.syncService.SendSingleAlertEmailAsync(alertID, uEmail, uName, gameTitle, gameSlug, storeName, req.CurrentPrice, tp, disc, productURL)
-						}
+						_, _ = h.db.ExecContext(r.Context(), `
+							INSERT INTO price_alerts (wishlist_id, store_name, triggered_price, message, is_read, triggered_at)
+							VALUES ($1, $2, $3, $4, false, NOW());
+						`, wid, storeName, req.CurrentPrice, msg)
 					}
 				}
 			}

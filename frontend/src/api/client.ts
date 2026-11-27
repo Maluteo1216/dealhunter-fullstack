@@ -145,8 +145,8 @@ export const api = {
     return request<WishlistItem[]>('/api/v1/wishlist');
   },
 
-  addToWishlist: (gameId: number, targetPrice: number): Promise<{ id: number; message: string; email_sent?: boolean; email_error?: string }> => {
-    return request<{ id: number; message: string; email_sent?: boolean; email_error?: string }>('/api/v1/wishlist', {
+  addToWishlist: (gameId: number, targetPrice: number): Promise<{ id: number; message: string }> => {
+    return request<{ id: number; message: string }>('/api/v1/wishlist', {
       method: 'POST',
       body: JSON.stringify({ game_id: gameId, target_price: targetPrice }),
     });

@@ -39,7 +39,7 @@ export const AuthPage: React.FC = () => {
             Bienvenido a DealHunter
           </h1>
           <p className="text-xs text-slate-400">
-            Inicia sesión con tu cuenta de Google para gestionar tu lista de deseos y recibir alertas de precio por correo.
+            Inicia sesión con tu cuenta de Google para gestionar tu lista de deseos y recibir alertas de precio.
           </p>
         </div>
 

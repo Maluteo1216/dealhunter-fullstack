@@ -32,8 +32,7 @@ export const GameDetailPage: React.FC = () => {
 
   // Widget de Wishlist
   const [targetPrice, setTargetPrice] = useState<string>('');
-  const [wishlistSuccess, setWishlistSuccess] = useState<string | null>(null);
-  const [wishlistEmailWarning, setWishlistEmailWarning] = useState<string | null>(null);
+  const [wishlistSuccess, setWishlistSuccess] = useState<boolean>(false);
   const [wishlistLoading, setWishlistLoading] = useState<boolean>(false);
   const [existingWishlist, setExistingWishlist] = useState<{ id: number; target_price: number } | null>(null);
   const [isSearchingStores, setIsSearchingStores] = useState<boolean>(false);
@@ -114,22 +113,10 @@ export const GameDetailPage: React.FC = () => {
 
     try {
       setWishlistLoading(true);
-      setWishlistSuccess(null);
-      setWishlistEmailWarning(null);
-      const res = await api.addToWishlist(detail.game.id, priceNum);
+      await api.addToWishlist(detail.game.id, priceNum);
+      setWishlistSuccess(true);
       setExistingWishlist({ id: detail.game.id, target_price: priceNum });
-      if (res.email_sent) {
-        setWishlistSuccess('¡Alerta guardada en la página y correo enviado a tu Gmail!');
-      } else {
-        setWishlistSuccess('¡Alerta guardada en tu Wishlist y notificaciones de la página!');
-        if (res.email_error) {
-          setWishlistEmailWarning(`Correo no enviado: ${res.email_error}`);
-        }
-      }
-      setTimeout(() => {
-        setWishlistSuccess(null);
-        setWishlistEmailWarning(null);
-      }, 8000);
+      setTimeout(() => setWishlistSuccess(false), 4000);
     } catch (err: any) {
       alert(err.message || 'Error al guardar alerta');
     } finally {
@@ -316,7 +303,7 @@ export const GameDetailPage: React.FC = () => {
                 )}
               </div>
               <p className="text-xs text-slate-400 mb-3">
-                Te enviaremos un correo a tu cuenta de Google al guardar y cuando el precio baje hasta este objetivo (acepta desde $0.00 gratis).
+                Te notificaremos en la página cuando el juego baje o alcance este precio en cualquiera de las tiendas (acepta desde $0.00 gratis).
               </p>
 
               <form onSubmit={handleSaveWishlist} className="flex items-center gap-2">
@@ -356,13 +343,7 @@ export const GameDetailPage: React.FC = () => {
               {wishlistSuccess && (
                 <div className="mt-2 text-xs text-emerald-300 font-medium flex items-center gap-1.5 animate-fadeIn">
                   <CheckCircle className="w-3.5 h-3.5 shrink-0" />
-                  <span>{wishlistSuccess}</span>
-                </div>
-              )}
-              {wishlistEmailWarning && (
-                <div className="mt-1.5 text-xs text-amber-300 font-medium flex items-start gap-1.5 bg-amber-950/30 border border-amber-500/30 rounded-lg p-2">
-                  <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  <span>{wishlistEmailWarning}</span>
+                  <span>¡Alerta guardada! Te notificaremos en la página cuando el precio cumpla tu objetivo.</span>
                 </div>
               )}
             </div>

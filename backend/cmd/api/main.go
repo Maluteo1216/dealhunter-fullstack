@@ -31,27 +31,16 @@ func main() {
 	}
 
 	// Inicializar servicios y handlers
-	emailService := services.NewEmailService(
-		cfg.BrevoAPIKey,
-		cfg.ResendAPIKey,
-		cfg.SMTPHost,
-		cfg.SMTPPort,
-		cfg.SMTPUser,
-		cfg.SMTPPass,
-		cfg.SMTPFrom,
-		cfg.FrontendURL,
-	)
-
 	var syncService *services.SyncService
 	if db != nil && db.Pool != nil {
-		syncService = services.NewSyncService(db.Pool, emailService)
+		syncService = services.NewSyncService(db.Pool)
 	}
 
 	var dbPool = db.Pool
 	authHandler := handlers.NewAuthHandler(dbPool, cfg.JWTSecret, cfg.GoogleClientID, cfg.AdminEmail)
 	gameHandler := handlers.NewGameHandler(dbPool, syncService)
 	storeHandler := handlers.NewStoreHandler(dbPool)
-	wishlistHandler := handlers.NewWishlistHandler(dbPool, syncService)
+	wishlistHandler := handlers.NewWishlistHandler(dbPool)
 	alertHandler := handlers.NewAlertHandler(dbPool)
 	syncHandler := handlers.NewSyncHandler(dbPool, syncService)
 

@@ -122,7 +122,6 @@ export interface PriceAlert {
   target_price: number;
   message: string;
   is_read: boolean;
-  email_sent?: boolean;
   triggered_at: string;
 }
 
