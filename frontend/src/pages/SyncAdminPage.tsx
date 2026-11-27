@@ -54,18 +54,25 @@ export const SyncAdminPage: React.FC = () => {
     }
   }, [isAuthenticated, user?.is_admin]);
 
-  // Helper para obtener tiendas de CheapShark
+  // Tiendas permitidas: Steam (1), Epic Games Store (25), GOG (7) y Humble Store (11)
+  const ALLOWED_STORE_IDS = ['1', '25', '7', '11'];
+  const ALLOWED_STORE_QUERY = '1,25,7,11';
+
+  // Helper para obtener tiendas oficiales permitidas de CheapShark
   const fetchCheapSharkStores = async (): Promise<CheapSharkStore[]> => {
     try {
       const res = await fetch('https://www.cheapshark.com/api/1.0/stores');
-      if (res.ok) return await res.json();
+      if (res.ok) {
+        const allStores: CheapSharkStore[] = await res.json();
+        return allStores.filter((s) => ALLOWED_STORE_IDS.includes(s.storeID));
+      }
     } catch (e) {
       console.warn('No se pudieron obtener tiendas externas:', e);
     }
     return [];
   };
 
-  // 1. Descubrimiento Aleatorio: 60 Juegos al Azar
+  // 1. Descubrimiento Aleatorio: 60 Juegos al Azar (solo Steam, Epic, GOG y Humble)
   const handleRandomSync = async () => {
     setSyncingRandom(true);
     setSyncStatus({ type: null, message: '' });
@@ -76,10 +83,10 @@ export const SyncAdminPage: React.FC = () => {
       const sortOptions = ['Deal Rating', 'Savings', 'Reviews', 'Metacritic', 'Release', 'recent'];
       const randomSort = sortOptions[Math.floor(Math.random() * sortOptions.length)];
 
-      setSyncProgressText(`Consultando CheapShark (Página aleatoria #${randomPage}, ordenado por ${randomSort})...`);
+      setSyncProgressText(`Consultando CheapShark para Steam, Epic, GOG y Humble (Página #${randomPage}, ${randomSort})...`);
 
       const dealsResp = await fetch(
-        `https://www.cheapshark.com/api/1.0/deals?onSale=1&pageSize=60&pageNumber=${randomPage}&sortBy=${encodeURIComponent(
+        `https://www.cheapshark.com/api/1.0/deals?storeID=${ALLOWED_STORE_QUERY}&onSale=1&pageSize=60&pageNumber=${randomPage}&sortBy=${encodeURIComponent(
           randomSort
         )}`
       );
@@ -139,11 +146,11 @@ export const SyncAdminPage: React.FC = () => {
         const randomSort = sortOptions[Math.floor(Math.random() * sortOptions.length)];
 
         setSyncProgressText(
-          `Lote ${i + 1} de ${totalPages}: Descargando 60 ofertas de la Página #${pageNum} (${randomSort})...`
+          `Lote ${i + 1} de ${totalPages}: Descargando 60 ofertas (Steam, Epic, GOG, Humble) de Página #${pageNum}...`
         );
 
         const dealsResp = await fetch(
-          `https://www.cheapshark.com/api/1.0/deals?onSale=1&pageSize=60&pageNumber=${pageNum}&sortBy=${encodeURIComponent(
+          `https://www.cheapshark.com/api/1.0/deals?storeID=${ALLOWED_STORE_QUERY}&onSale=1&pageSize=60&pageNumber=${pageNum}&sortBy=${encodeURIComponent(
             randomSort
           )}`
         );

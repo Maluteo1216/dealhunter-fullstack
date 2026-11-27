@@ -236,11 +236,12 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
     });
 
     const computedYMax = maxPriceObserved > 0 ? Math.ceil(maxPriceObserved * 1.15) : 60;
+    const rightPadding = Math.max((now - winStart) * 0.02, 60 * 1000);
 
     return {
       chartData: rows,
       domainStart: winStart,
-      domainEnd: now,
+      domainEnd: now + rightPadding,
       earliestRecordDate: earliestTs,
       yMax: computedYMax,
     };
@@ -400,8 +401,8 @@ export const PriceHistoryChart: React.FC<PriceHistoryChartProps> = ({
                   name={st.name}
                   stroke={st.color}
                   strokeWidth={2.25}
-                  dot={{ r: 3.5, fill: st.color, strokeWidth: 1, stroke: '#0f172a' }}
-                  activeDot={{ r: 5.5, fill: st.color, stroke: '#ffffff', strokeWidth: 1.5 }}
+                  dot={{ r: chartData.length <= 3 ? 5 : 3.5, fill: st.color, strokeWidth: 1, stroke: '#0f172a' }}
+                  activeDot={{ r: 6, fill: st.color, stroke: '#ffffff', strokeWidth: 1.5 }}
                   connectNulls
                   isAnimationActive={false}
                 />

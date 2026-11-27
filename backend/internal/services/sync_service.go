@@ -22,6 +22,17 @@ import (
 // User-Agent descriptivo obligatorio requerido por CheapShark API para evitar HTTP 400
 const CheapSharkUserAgent = "DealHunter/1.0 (contact@dealhunter.app; +https://dealhunter.netlify.app)"
 
+// AllowedStoreIDs limita la sincronización exclusivamente a las 4 tiendas principales:
+// Steam (1), Epic Games Store (25), GOG (7) y Humble Store (11)
+var AllowedStoreIDs = map[string]bool{
+	"1":  true, // Steam
+	"25": true, // Epic Games Store
+	"7":  true, // GOG
+	"11": true, // Humble Store
+}
+
+const AllowedStoreIDsParam = "1,25,7,11"
+
 type SyncService struct {
 	db           *sql.DB
 	emailService *EmailService
@@ -165,6 +176,16 @@ func (s *SyncService) SendSingleAlertEmailAsync(alertID int, toEmail, username, 
 	}})
 }
 
+// SendWishlistConfirmationEmailAsync envía un correo de confirmación al agregar un juego con precio objetivo inferior al actual
+func (s *SyncService) SendWishlistConfirmationEmailAsync(toEmail, username, gameTitle, gameSlug, storeName string, currentPrice, targetPrice float64) {
+	if s.emailService == nil || !s.emailService.IsConfigured() {
+		return
+	}
+	go func() {
+		_ = s.emailService.SendWishlistConfirmationEmail(toEmail, username, gameTitle, gameSlug, storeName, currentPrice, targetPrice)
+	}()
+}
+
 var nonAlphaNumRegex = regexp.MustCompile(`[^a-z0-9]+`)
 var onlyAlphaNumRegex = regexp.MustCompile(`[^a-z0-9]+`)
 
@@ -236,8 +257,11 @@ func (s *SyncService) IngestDeals(ctx context.Context, source string, payload mo
 	seenGameIDs := make(map[int]bool)
 	var allPendingEmails []pendingAlertEmail
 
-	// 1. Sincronizar Tiendas si vienen en el payload
+	// 1. Sincronizar Tiendas permitidas si vienen en el payload (Steam, Epic, GOG, Humble)
 	for _, store := range payload.Stores {
+		if !AllowedStoreIDs[store.StoreID] {
+			continue
+		}
 		slug := CleanSlug(store.StoreName)
 		logoURL := fmt.Sprintf("https://www.cheapshark.com%s", store.Images.Logo)
 		if !strings.HasPrefix(store.Images.Logo, "/") {
@@ -270,8 +294,11 @@ func (s *SyncService) IngestDeals(ctx context.Context, source string, payload mo
 		}
 	}
 
-	// 3. Procesar cada oferta
+	// 3. Procesar cada oferta (restringido estrictamente a las 4 tiendas permitidas)
 	for _, deal := range payload.Deals {
+		if !AllowedStoreIDs[deal.StoreID] {
+			continue
+		}
 		salePrice, err := strconv.ParseFloat(deal.SalePrice, 64)
 		if err != nil {
 			continue
@@ -559,8 +586,11 @@ func (s *SyncService) EnrichGameMultiStore(ctx context.Context, gameID int, exte
 	client := &http.Client{Timeout: 12 * time.Second}
 	var gameLookup CheapSharkGameLookupResponse
 
-	// Helper para agregar ofertas evitando tiendas duplicadas
+	// Helper para agregar ofertas únicamente de las 4 tiendas permitidas (Steam, Epic, GOG, Humble) sin duplicados
 	addDealIfMissing := func(deal CheapSharkGameLookupDeal) {
+		if !AllowedStoreIDs[deal.StoreID] {
+			return
+		}
 		for _, existing := range gameLookup.Deals {
 			if existing.StoreID == deal.StoreID {
 				return
@@ -1208,21 +1238,16 @@ func (s *SyncService) FetchFromServer(ctx context.Context) (int, error) {
 		}
 	}
 
-	// 2. Recolectar ofertas de las tiendas oficiales más importantes para garantizar coincidencias multi-tienda:
-	// - onSale=1 (Ofertas generales destacadas)
+	// 2. Recolectar ofertas exclusivamente de las 4 tiendas oficiales seleccionadas:
 	// - storeID=1 (Steam)
 	// - storeID=25 (Epic Games Store)
 	// - storeID=7 (GOG)
-	// - storeID=15 (Fanatical)
-	// - storeID=3 (GreenManGaming)
 	// - storeID=11 (Humble Store)
 	endpoints := []string{
-		"https://www.cheapshark.com/api/1.0/deals?onSale=1&pageSize=60",
+		"https://www.cheapshark.com/api/1.0/deals?storeID=1,25,7,11&onSale=1&pageSize=60",
 		"https://www.cheapshark.com/api/1.0/deals?storeID=1&pageSize=60",
 		"https://www.cheapshark.com/api/1.0/deals?storeID=25&pageSize=60",
 		"https://www.cheapshark.com/api/1.0/deals?storeID=7&pageSize=60",
-		"https://www.cheapshark.com/api/1.0/deals?storeID=15&pageSize=60",
-		"https://www.cheapshark.com/api/1.0/deals?storeID=3&pageSize=60",
 		"https://www.cheapshark.com/api/1.0/deals?storeID=11&pageSize=60",
 	}
 
@@ -1322,8 +1347,8 @@ func (s *SyncService) FetchRandomFromServer(ctx context.Context) (*RandomSyncRes
 	randomPage := r.Intn(20) + 1 // Páginas 1 a 20 para traer juegos nunca antes vistos
 	selectedSort := sortOptions[r.Intn(len(sortOptions))]
 
-	dealURL := fmt.Sprintf("https://www.cheapshark.com/api/1.0/deals?onSale=1&pageSize=60&pageNumber=%d&sortBy=%s",
-		randomPage, url.QueryEscape(selectedSort))
+	dealURL := fmt.Sprintf("https://www.cheapshark.com/api/1.0/deals?storeID=%s&onSale=1&pageSize=60&pageNumber=%d&sortBy=%s",
+		AllowedStoreIDsParam, randomPage, url.QueryEscape(selectedSort))
 
 	req, err := http.NewRequestWithContext(ctx, "GET", dealURL, nil)
 	if err != nil {

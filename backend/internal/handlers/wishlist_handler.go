@@ -109,9 +109,9 @@ func (h *WishlistHandler) AddToWishlist(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req models.WishlistRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.GameID <= 0 || req.TargetPrice <= 0 {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.GameID <= 0 || req.TargetPrice < 0 {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "game_id y target_price mayor a 0 son obligatorios"})
+		json.NewEncoder(w).Encode(map[string]string{"error": "game_id válido y target_price mayor o igual a 0.00 son obligatorios"})
 		return
 	}
 
@@ -167,6 +167,9 @@ func (h *WishlistHandler) AddToWishlist(w http.ResponseWriter, r *http.Request) 
 				h.syncService.SendSingleAlertEmailAsync(alertID, userEmail, userName, gameTitle, gameSlug, storeName, bestPrice, req.TargetPrice, discountPct, productURL)
 			}
 		}
+	} else if err == nil && h.syncService != nil {
+		// El precio objetivo está por debajo del precio actual: enviar correo de confirmación/monitoreo al correo de Google
+		h.syncService.SendWishlistConfirmationEmailAsync(userEmail, userName, gameTitle, gameSlug, storeName, bestPrice, req.TargetPrice)
 	}
 
 	w.WriteHeader(http.StatusOK)

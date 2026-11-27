@@ -107,8 +107,8 @@ export const GameDetailPage: React.FC = () => {
     if (!detail) return;
 
     const priceNum = parseFloat(targetPrice);
-    if (isNaN(priceNum) || priceNum <= 0) {
-      alert('Por favor ingresa un precio objetivo válido mayor a cero');
+    if (isNaN(priceNum) || priceNum < 0) {
+      alert('Por favor ingresa un precio objetivo válido (desde $0.00 en adelante)');
       return;
     }
 
@@ -304,7 +304,7 @@ export const GameDetailPage: React.FC = () => {
                 )}
               </div>
               <p className="text-xs text-slate-400 mb-3">
-                Te notificaremos cuando el juego baje o alcance este precio en cualquiera de las tiendas.
+                Te enviaremos un correo a tu cuenta de Google al guardar y cuando el precio baje hasta este objetivo (acepta desde $0.00 gratis).
               </p>
 
               <form onSubmit={handleSaveWishlist} className="flex items-center gap-2">
@@ -313,8 +313,8 @@ export const GameDetailPage: React.FC = () => {
                   <input
                     type="number"
                     step="0.01"
-                    min="0.50"
-                    placeholder="Ej. 14.99"
+                    min="0"
+                    placeholder="Ej. 0.00 o 14.99"
                     value={targetPrice}
                     onChange={(e) => setTargetPrice(e.target.value)}
                     className="w-full pl-8 pr-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-100 focus:outline-none focus:border-brand-500"

@@ -61,8 +61,8 @@ export const WishlistPage: React.FC = () => {
 
   const handleUpdatePrice = async (gameId: number) => {
     const priceNum = parseFloat(newTargetPrice);
-    if (isNaN(priceNum) || priceNum <= 0) {
-      alert('Por favor ingresa un precio válido');
+    if (isNaN(priceNum) || priceNum < 0) {
+      alert('Por favor ingresa un precio válido (desde $0.00 en adelante)');
       return;
     }
 
@@ -316,6 +316,7 @@ export const WishlistPage: React.FC = () => {
                             <input
                               type="number"
                               step="0.01"
+                              min="0"
                               value={newTargetPrice}
                               onChange={(e) => setNewTargetPrice(e.target.value)}
                               className="w-16 px-1.5 py-0.5 bg-slate-900 border border-brand-500 rounded text-xs text-white"
