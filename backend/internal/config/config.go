@@ -15,6 +15,8 @@ type Config struct {
 	JWTSecret      string
 	GoogleClientID string
 	AdminEmail     string
+	BrevoAPIKey    string
+	ResendAPIKey   string
 	SMTPHost       string
 	SMTPPort       string
 	SMTPUser       string
@@ -43,6 +45,8 @@ func LoadConfig() *Config {
 	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
 	adminEmail := strings.ToLower(strings.TrimSpace(os.Getenv("ADMIN_EMAIL")))
 
+	brevoAPIKey := strings.TrimSpace(os.Getenv("BREVO_API_KEY"))
+	resendAPIKey := strings.TrimSpace(os.Getenv("RESEND_API_KEY"))
 	smtpUser := strings.TrimSpace(os.Getenv("SMTP_USER"))
 	smtpPass := strings.ReplaceAll(strings.TrimSpace(os.Getenv("SMTP_PASS")), " ", "")
 	smtpHost := strings.TrimSpace(os.Getenv("SMTP_HOST"))
@@ -68,6 +72,8 @@ func LoadConfig() *Config {
 		JWTSecret:      jwtSecret,
 		GoogleClientID: googleClientID,
 		AdminEmail:     adminEmail,
+		BrevoAPIKey:    brevoAPIKey,
+		ResendAPIKey:   resendAPIKey,
 		SMTPHost:       smtpHost,
 		SMTPPort:       smtpPort,
 		SMTPUser:       smtpUser,

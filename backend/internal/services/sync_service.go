@@ -186,6 +186,30 @@ func (s *SyncService) SendWishlistConfirmationEmailAsync(toEmail, username, game
 	}()
 }
 
+// SendSingleAlertEmailNow envía un correo de alerta de forma síncrona (con timeout del transporte) y retorna el resultado
+func (s *SyncService) SendSingleAlertEmailNow(ctx context.Context, alertID int, toEmail, username, gameTitle, gameSlug, storeName string, triggeredPrice, targetPrice, discountPct float64, productURL string) error {
+	if s.emailService == nil {
+		return fmt.Errorf("servicio de correo no inicializado")
+	}
+	err := s.emailService.SendPriceAlertEmail(toEmail, username, gameTitle, gameSlug, storeName, triggeredPrice, targetPrice, discountPct, productURL)
+	if err == nil && alertID > 0 && s.db != nil {
+		_, _ = s.db.ExecContext(ctx, `UPDATE price_alerts SET email_sent = true WHERE id = $1;`, alertID)
+	}
+	return err
+}
+
+// SendWishlistConfirmationEmailNow envía un correo de confirmación/prueba de forma síncrona y marca email_sent en price_alerts
+func (s *SyncService) SendWishlistConfirmationEmailNow(ctx context.Context, alertID int, toEmail, username, gameTitle, gameSlug, storeName string, currentPrice, targetPrice float64) error {
+	if s.emailService == nil {
+		return fmt.Errorf("servicio de correo no inicializado")
+	}
+	err := s.emailService.SendWishlistConfirmationEmail(toEmail, username, gameTitle, gameSlug, storeName, currentPrice, targetPrice)
+	if err == nil && alertID > 0 && s.db != nil {
+		_, _ = s.db.ExecContext(ctx, `UPDATE price_alerts SET email_sent = true WHERE id = $1;`, alertID)
+	}
+	return err
+}
+
 var nonAlphaNumRegex = regexp.MustCompile(`[^a-z0-9]+`)
 var onlyAlphaNumRegex = regexp.MustCompile(`[^a-z0-9]+`)
 

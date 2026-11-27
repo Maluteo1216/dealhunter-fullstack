@@ -1,37 +1,201 @@
 package services
 
 import (
+	"bytes"
+	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"log"
+	"mime"
+	"net"
+	"net/http"
 	"net/smtp"
 	"strings"
+	"time"
 )
 
-// EmailService gestiona el envío de correos electrónicos de alertas mediante SMTP (ej. Gmail App Password)
+// EmailService gestiona el envío de correos de alertas mediante API HTTP (Brevo/Resend, recomendado en Render) o SMTP (Gmail App Password)
 type EmailService struct {
-	host        string
-	port        string
-	user        string
-	pass        string
-	from        string
-	frontendURL string
+	brevoAPIKey  string
+	resendAPIKey string
+	host         string
+	port         string
+	user         string
+	pass         string
+	from         string
+	frontendURL  string
 }
 
-func NewEmailService(host, port, user, pass, from, frontendURL string) *EmailService {
+func NewEmailService(brevoAPIKey, resendAPIKey, host, port, user, pass, from, frontendURL string) *EmailService {
 	return &EmailService{
-		host:        strings.TrimSpace(host),
-		port:        strings.TrimSpace(port),
-		user:        strings.TrimSpace(user),
-		pass:        strings.ReplaceAll(strings.TrimSpace(pass), " ", ""),
-		from:        strings.TrimSpace(from),
-		frontendURL: strings.TrimRight(strings.TrimSpace(frontendURL), "/"),
+		brevoAPIKey:  strings.TrimSpace(brevoAPIKey),
+		resendAPIKey: strings.TrimSpace(resendAPIKey),
+		host:         strings.TrimSpace(host),
+		port:         strings.TrimSpace(port),
+		user:         strings.TrimSpace(user),
+		pass:         strings.ReplaceAll(strings.TrimSpace(pass), " ", ""),
+		from:         strings.TrimSpace(from),
+		frontendURL:  strings.TrimRight(strings.TrimSpace(frontendURL), "/"),
 	}
 }
 
-// IsConfigured indica si las credenciales SMTP están presentes para enviar correos reales
+// IsConfigured indica si existe algún proveedor de correo configurado (Brevo, Resend o SMTP)
 func (e *EmailService) IsConfigured() bool {
-	return e != nil && e.host != "" && e.port != "" && e.user != "" && e.pass != ""
+	if e == nil {
+		return false
+	}
+	if e.brevoAPIKey != "" || e.resendAPIKey != "" {
+		return true
+	}
+	return e.host != "" && e.port != "" && e.user != "" && e.pass != ""
+}
+
+// sendEmail envía un correo HTML usando el mejor transporte disponible (Brevo HTTPS -> Resend HTTPS -> SMTP con timeout)
+func (e *EmailService) sendEmail(toEmail, subject, bodyHTML string) error {
+	if !e.IsConfigured() {
+		return fmt.Errorf("servicio de correo no configurado en el backend (agrega BREVO_API_KEY o SMTP_USER/SMTP_PASS en Render)")
+	}
+	toEmail = strings.TrimSpace(toEmail)
+	if toEmail == "" {
+		return fmt.Errorf("destinatario vacío")
+	}
+
+	// 1. Prioridad: Brevo HTTP API (puerto 443 HTTPS — nunca bloqueado por Render Free Tier)
+	if e.brevoAPIKey != "" {
+		senderEmail := e.user
+		if senderEmail == "" {
+			senderEmail = "no-reply@dealhunter.app"
+		}
+		payload := map[string]interface{}{
+			"sender": map[string]string{
+				"name":  "DealHunter",
+				"email": senderEmail,
+			},
+			"to": []map[string]string{
+				{"email": toEmail},
+			},
+			"subject":     subject,
+			"htmlContent": bodyHTML,
+		}
+		jsonData, _ := json.Marshal(payload)
+		req, err := http.NewRequest("POST", "https://api.brevo.com/v3/smtp/email", bytes.NewBuffer(jsonData))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("api-key", e.brevoAPIKey)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("error conectando con Brevo API: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			respBody, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("Brevo API retornó %d: %s", resp.StatusCode, string(respBody))
+		}
+		log.Printf("[EmailService] Correo enviado vía Brevo API a %s", toEmail)
+		return nil
+	}
+
+	// 2. Resend HTTP API (puerto 443 HTTPS)
+	if e.resendAPIKey != "" {
+		fromHeader := e.from
+		if fromHeader == "" {
+			fromHeader = "DealHunter <onboarding@resend.dev>"
+		}
+		payload := map[string]interface{}{
+			"from":    fromHeader,
+			"to":      []string{toEmail},
+			"subject": subject,
+			"html":    bodyHTML,
+		}
+		jsonData, _ := json.Marshal(payload)
+		req, err := http.NewRequest("POST", "https://api.resend.com/emails", bytes.NewBuffer(jsonData))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+e.resendAPIKey)
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("error conectando con Resend API: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			respBody, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("Resend API retornó %d: %s", resp.StatusCode, string(respBody))
+		}
+		log.Printf("[EmailService] Correo enviado vía Resend API a %s", toEmail)
+		return nil
+	}
+
+	// 3. SMTP Directo (Gmail App Password) con timeout estricto de 8s para evitar bloqueos silenciosos
+	fromHeader := e.from
+	if fromHeader == "" {
+		fromHeader = fmt.Sprintf("DealHunter <%s>", e.user)
+	}
+	encodedSubject := mime.QEncoding.Encode("UTF-8", subject)
+	headers := []string{
+		fmt.Sprintf("From: %s", fromHeader),
+		fmt.Sprintf("To: %s", toEmail),
+		fmt.Sprintf("Subject: %s", encodedSubject),
+		"MIME-Version: 1.0",
+		"Content-Type: text/html; charset=\"UTF-8\"",
+	}
+	msg := []byte(strings.Join(headers, "\r\n") + "\r\n\r\n" + bodyHTML)
+
+	addr := fmt.Sprintf("%s:%s", e.host, e.port)
+	conn, err := net.DialTimeout("tcp", addr, 8*time.Second)
+	if err != nil {
+		return fmt.Errorf("no se pudo conectar a SMTP %s (nota: Render Free bloquea puertos SMTP; usa BREVO_API_KEY por HTTPS): %w", addr, err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+
+	c, err := smtp.NewClient(conn, e.host)
+	if err != nil {
+		return fmt.Errorf("error creando cliente SMTP: %w", err)
+	}
+	defer c.Close()
+
+	if ok, _ := c.Extension("STARTTLS"); ok {
+		tlsCfg := &tls.Config{ServerName: e.host}
+		if err := c.StartTLS(tlsCfg); err != nil {
+			return fmt.Errorf("error en STARTTLS SMTP: %w", err)
+		}
+	}
+
+	auth := smtp.PlainAuth("", e.user, e.pass, e.host)
+	if err := c.Auth(auth); err != nil {
+		return fmt.Errorf("error de autenticación SMTP (verifica usuario y contraseña de aplicación): %w", err)
+	}
+	if err := c.Mail(e.user); err != nil {
+		return err
+	}
+	if err := c.Rcpt(toEmail); err != nil {
+		return err
+	}
+	w, err := c.Data()
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write(msg); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	_ = c.Quit()
+
+	log.Printf("[EmailService] Correo enviado vía SMTP a %s", toEmail)
+	return nil
 }
 
 // SendPriceAlertEmail envía un correo HTML al usuario cuando un juego de su wishlist alcanza el precio objetivo
@@ -40,20 +204,6 @@ func (e *EmailService) SendPriceAlertEmail(
 	triggeredPrice, targetPrice, discountPct float64,
 	productURL string,
 ) error {
-	if !e.IsConfigured() {
-		log.Printf("[EmailService] SMTP no configurado; alerta guardada solo en base de datos para %s (%s)", toEmail, gameTitle)
-		return fmt.Errorf("SMTP no configurado")
-	}
-
-	if strings.TrimSpace(toEmail) == "" {
-		return fmt.Errorf("destinatario vacío")
-	}
-
-	fromHeader := e.from
-	if fromHeader == "" {
-		fromHeader = fmt.Sprintf("DealHunter <%s>", e.user)
-	}
-
 	gamePageURL := fmt.Sprintf("%s/game/%s", e.frontendURL, gameSlug)
 	buyURL := productURL
 	if buyURL == "" {
@@ -101,7 +251,7 @@ func (e *EmailService) SendPriceAlertEmail(
       <div style="text-align:center;margin-top:24px;">
         <a href="%s" style="display:inline-block;padding:12px 24px;background-color:#6366f1;color:#ffffff;text-decoration:none;font-weight:700;border-radius:10px;font-size:14px;">Ir a la Oferta en %s</a>
         <div style="margin-top:12px;">
-          <a href="%s" style="color:#94a3b8;font-size:12px;text-decoration:underline;">Ver historial de precios en DealHunter</a>
+          <a href="%s" style="color:#94a3b8;font-size:12px;text-decoration:underline;">Ver en DealHunter</a>
         </div>
       </div>
     </div>
@@ -112,47 +262,18 @@ func (e *EmailService) SendPriceAlertEmail(
 </body>
 </html>`, safeUser, safeTitle, safeStore, triggeredPrice, discountBadge, targetPrice, safeBuyURL, safeStore, safeGamePageURL)
 
-	headers := []string{
-		fmt.Sprintf("From: %s", fromHeader),
-		fmt.Sprintf("To: %s", toEmail),
-		fmt.Sprintf("Subject: %s", subject),
-		"MIME-Version: 1.0",
-		"Content-Type: text/html; charset=\"UTF-8\"",
+	err := e.sendEmail(toEmail, subject, bodyHTML)
+	if err != nil {
+		log.Printf("[EmailService] Error enviando alerta a %s: %v", toEmail, err)
 	}
-	msg := []byte(strings.Join(headers, "\r\n") + "\r\n\r\n" + bodyHTML)
-
-	addr := fmt.Sprintf("%s:%s", e.host, e.port)
-	auth := smtp.PlainAuth("", e.user, e.pass, e.host)
-
-	if err := smtp.SendMail(addr, auth, e.user, []string{toEmail}, msg); err != nil {
-		log.Printf("[EmailService] Error enviando correo a %s: %v", toEmail, err)
-		return err
-	}
-
-	log.Printf("[EmailService] Correo de alerta enviado exitosamente a %s (%s - $%.2f en %s)", toEmail, gameTitle, triggeredPrice, storeName)
-	return nil
+	return err
 }
 
-// SendWishlistConfirmationEmail envía un correo de confirmación/prueba al agregar un juego a la wishlist
-// cuando el precio actual aún está por encima del precio objetivo configurado.
+// SendWishlistConfirmationEmail envía un correo al usuario cuando agrega un juego con precio objetivo inferior al actual
 func (e *EmailService) SendWishlistConfirmationEmail(
 	toEmail, username, gameTitle, gameSlug, storeName string,
 	currentPrice, targetPrice float64,
 ) error {
-	if !e.IsConfigured() {
-		log.Printf("[EmailService] SMTP no configurado; confirmación de wishlist omitida para %s (%s)", toEmail, gameTitle)
-		return fmt.Errorf("SMTP no configurado")
-	}
-
-	if strings.TrimSpace(toEmail) == "" {
-		return fmt.Errorf("destinatario vacío")
-	}
-
-	fromHeader := e.from
-	if fromHeader == "" {
-		fromHeader = fmt.Sprintf("DealHunter <%s>", e.user)
-	}
-
 	gamePageURL := fmt.Sprintf("%s/game/%s", e.frontendURL, gameSlug)
 	safeUser := html.EscapeString(username)
 	if safeUser == "" {
@@ -175,7 +296,7 @@ func (e *EmailService) SendWishlistConfirmationEmail(
     <div style="padding:24px;">
       <p style="margin-top:0;font-size:15px;color:#cbd5e1;">Hola <strong>%s</strong>,</p>
       <p style="font-size:15px;color:#cbd5e1;line-height:1.6;">
-        Has agregado un nuevo videojuego a tu lista de deseos. Te enviaremos otra alerta automática en cuanto baje hasta tu precio objetivo:
+        Has agregado un nuevo videojuego a tu lista de deseos con un precio objetivo inferior al actual. Te enviaremos otra alerta automática en cuanto baje hasta tu meta:
       </p>
       <div style="background:#0f172a;border:1px solid #334155;border-radius:12px;padding:18px;margin:18px 0;">
         <div style="font-size:18px;font-weight:700;color:#ffffff;margin-bottom:8px;">%s</div>
@@ -193,23 +314,9 @@ func (e *EmailService) SendWishlistConfirmationEmail(
 </body>
 </html>`, safeUser, safeTitle, safeStore, currentPrice, targetPrice, safeGamePageURL)
 
-	headers := []string{
-		fmt.Sprintf("From: %s", fromHeader),
-		fmt.Sprintf("To: %s", toEmail),
-		fmt.Sprintf("Subject: %s", subject),
-		"MIME-Version: 1.0",
-		"Content-Type: text/html; charset=\"UTF-8\"",
-	}
-	msg := []byte(strings.Join(headers, "\r\n") + "\r\n\r\n" + bodyHTML)
-
-	addr := fmt.Sprintf("%s:%s", e.host, e.port)
-	auth := smtp.PlainAuth("", e.user, e.pass, e.host)
-
-	if err := smtp.SendMail(addr, auth, e.user, []string{toEmail}, msg); err != nil {
+	err := e.sendEmail(toEmail, subject, bodyHTML)
+	if err != nil {
 		log.Printf("[EmailService] Error enviando confirmación de wishlist a %s: %v", toEmail, err)
-		return err
 	}
-
-	log.Printf("[EmailService] Correo de confirmación de wishlist enviado a %s (%s - objetivo $%.2f)", toEmail, gameTitle, targetPrice)
-	return nil
+	return err
 }

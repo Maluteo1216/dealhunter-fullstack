@@ -172,7 +172,7 @@ export const HomePage: React.FC = () => {
             Encuentra las mejores ofertas de videojuegos.
           </h1>
           <p className="mt-3 text-base text-slate-300">
-            Compara precios entre Steam, Epic Games, GOG, Humble Store. Registra alertas y no vuelvas a pagar de más.
+            Compara precios entre Steam, Epic Games, GOG y Humble Store. Registra alertas y no vuelvas a pagar de más.
           </p>
         </div>
       </div>
@@ -221,8 +221,8 @@ export const HomePage: React.FC = () => {
             <button
               onClick={() => setShowFilters(!showFilters)}
               className={`inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg border text-sm font-medium transition ${showFilters || hasActiveFilters
-                  ? 'bg-brand-500/15 border-brand-500/40 text-brand-300'
-                  : 'bg-slate-950 border-slate-700 text-slate-300 hover:bg-slate-800'
+                ? 'bg-brand-500/15 border-brand-500/40 text-brand-300'
+                : 'bg-slate-950 border-slate-700 text-slate-300 hover:bg-slate-800'
                 }`}
             >
               <SlidersHorizontal className="w-4 h-4" />
@@ -323,8 +323,8 @@ export const HomePage: React.FC = () => {
                       setPage(1);
                     }}
                     className={`py-1.5 text-xs font-medium rounded border transition ${minDiscount === item.value
-                        ? 'bg-brand-600 border-brand-500 text-white font-bold'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                      ? 'bg-brand-600 border-brand-500 text-white font-bold'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
                       }`}
                   >
                     {item.label}
@@ -353,8 +353,8 @@ export const HomePage: React.FC = () => {
                       setPage(1);
                     }}
                     className={`py-1.5 text-xs font-medium rounded border transition ${maxPrice === item.value
-                        ? 'bg-brand-600 border-brand-500 text-white font-bold'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                      ? 'bg-brand-600 border-brand-500 text-white font-bold'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
                       }`}
                   >
                     {item.label}

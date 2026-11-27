@@ -32,6 +32,8 @@ func main() {
 
 	// Inicializar servicios y handlers
 	emailService := services.NewEmailService(
+		cfg.BrevoAPIKey,
+		cfg.ResendAPIKey,
 		cfg.SMTPHost,
 		cfg.SMTPPort,
 		cfg.SMTPUser,

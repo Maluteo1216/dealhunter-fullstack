@@ -32,7 +32,8 @@ export const GameDetailPage: React.FC = () => {
 
   // Widget de Wishlist
   const [targetPrice, setTargetPrice] = useState<string>('');
-  const [wishlistSuccess, setWishlistSuccess] = useState<boolean>(false);
+  const [wishlistSuccess, setWishlistSuccess] = useState<string | null>(null);
+  const [wishlistEmailWarning, setWishlistEmailWarning] = useState<string | null>(null);
   const [wishlistLoading, setWishlistLoading] = useState<boolean>(false);
   const [existingWishlist, setExistingWishlist] = useState<{ id: number; target_price: number } | null>(null);
   const [isSearchingStores, setIsSearchingStores] = useState<boolean>(false);
@@ -113,10 +114,22 @@ export const GameDetailPage: React.FC = () => {
 
     try {
       setWishlistLoading(true);
-      await api.addToWishlist(detail.game.id, priceNum);
-      setWishlistSuccess(true);
+      setWishlistSuccess(null);
+      setWishlistEmailWarning(null);
+      const res = await api.addToWishlist(detail.game.id, priceNum);
       setExistingWishlist({ id: detail.game.id, target_price: priceNum });
-      setTimeout(() => setWishlistSuccess(false), 4000);
+      if (res.email_sent) {
+        setWishlistSuccess('¡Alerta guardada en la página y correo enviado a tu Gmail!');
+      } else {
+        setWishlistSuccess('¡Alerta guardada en tu Wishlist y notificaciones de la página!');
+        if (res.email_error) {
+          setWishlistEmailWarning(`Correo no enviado: ${res.email_error}`);
+        }
+      }
+      setTimeout(() => {
+        setWishlistSuccess(null);
+        setWishlistEmailWarning(null);
+      }, 8000);
     } catch (err: any) {
       alert(err.message || 'Error al guardar alerta');
     } finally {
@@ -342,8 +355,14 @@ export const GameDetailPage: React.FC = () => {
 
               {wishlistSuccess && (
                 <div className="mt-2 text-xs text-emerald-300 font-medium flex items-center gap-1.5 animate-fadeIn">
-                  <CheckCircle className="w-3.5 h-3.5" />
-                  ¡Alerta guardada! Te avisaremos si el precio cumple tu objetivo.
+                  <CheckCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{wishlistSuccess}</span>
+                </div>
+              )}
+              {wishlistEmailWarning && (
+                <div className="mt-1.5 text-xs text-amber-300 font-medium flex items-start gap-1.5 bg-amber-950/30 border border-amber-500/30 rounded-lg p-2">
+                  <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <span>{wishlistEmailWarning}</span>
                 </div>
               )}
             </div>

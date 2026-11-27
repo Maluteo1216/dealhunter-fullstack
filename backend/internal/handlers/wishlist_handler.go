@@ -131,7 +131,7 @@ func (h *WishlistHandler) AddToWishlist(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Verificar si el precio actual ya cumple el objetivo para disparar una alerta instantánea
+	// Verificar el precio actual del juego y disparar notificación en la página + correo electrónico
 	var bestPrice, discountPct float64
 	var storeName, gameTitle, gameSlug, productURL, userEmail, userName string
 	err = h.db.QueryRowContext(r.Context(), `
@@ -146,30 +146,43 @@ func (h *WishlistHandler) AddToWishlist(w http.ResponseWriter, r *http.Request) 
 		LIMIT 1;
 	`, req.GameID, userID).Scan(&bestPrice, &discountPct, &storeName, &gameTitle, &gameSlug, &productURL, &userEmail, &userName)
 
-	if err == nil && bestPrice <= req.TargetPrice {
-		var countExisting int
-		_ = h.db.QueryRowContext(r.Context(), `
-			SELECT COUNT(*) FROM price_alerts 
-			WHERE wishlist_id = $1 AND store_name = $2 
-			  AND triggered_price = $3 AND triggered_at > NOW() - INTERVAL '24 hours';
-		`, wishlistID, storeName, bestPrice).Scan(&countExisting)
+	emailSent := false
+	emailError := ""
 
-		if countExisting == 0 {
-			msg := fmt.Sprintf("¡%s ya está a solo $%.2f en %s (por debajo de tu objetivo de $%.2f)!", gameTitle, bestPrice, storeName, req.TargetPrice)
-			var alertID int
-			errAlert := h.db.QueryRowContext(r.Context(), `
-				INSERT INTO price_alerts (wishlist_id, store_name, triggered_price, message, is_read, email_sent, triggered_at)
-				VALUES ($1, $2, $3, $4, false, false, NOW())
-				RETURNING id;
-			`, wishlistID, storeName, bestPrice, msg).Scan(&alertID)
+	if err == nil {
+		var alertMsg string
+		var triggeredPrice float64
+		isBelowOrEqualCurrent := bestPrice <= req.TargetPrice
 
-			if errAlert == nil && alertID > 0 && h.syncService != nil {
-				h.syncService.SendSingleAlertEmailAsync(alertID, userEmail, userName, gameTitle, gameSlug, storeName, bestPrice, req.TargetPrice, discountPct, productURL)
+		if isBelowOrEqualCurrent {
+			alertMsg = fmt.Sprintf("¡%s ya está a solo $%.2f en %s (cumple tu objetivo de $%.2f)!", gameTitle, bestPrice, storeName, req.TargetPrice)
+			triggeredPrice = bestPrice
+		} else {
+			// El precio objetivo está por debajo del precio actual: notificar en la página y enviar correo de confirmación/prueba
+			alertMsg = fmt.Sprintf("¡Wishlist activada para %s! Precio actual: $%.2f en %s. Te avisaremos cuando baje a $%.2f.", gameTitle, bestPrice, storeName, req.TargetPrice)
+			triggeredPrice = bestPrice
+		}
+
+		var alertID int
+		errAlert := h.db.QueryRowContext(r.Context(), `
+			INSERT INTO price_alerts (wishlist_id, store_name, triggered_price, message, is_read, email_sent, triggered_at)
+			VALUES ($1, $2, $3, $4, false, false, NOW())
+			RETURNING id;
+		`, wishlistID, storeName, triggeredPrice, alertMsg).Scan(&alertID)
+
+		if errAlert == nil && alertID > 0 && h.syncService != nil {
+			var mailErr error
+			if isBelowOrEqualCurrent {
+				mailErr = h.syncService.SendSingleAlertEmailNow(r.Context(), alertID, userEmail, userName, gameTitle, gameSlug, storeName, bestPrice, req.TargetPrice, discountPct, productURL)
+			} else {
+				mailErr = h.syncService.SendWishlistConfirmationEmailNow(r.Context(), alertID, userEmail, userName, gameTitle, gameSlug, storeName, bestPrice, req.TargetPrice)
+			}
+			if mailErr == nil {
+				emailSent = true
+			} else {
+				emailError = mailErr.Error()
 			}
 		}
-	} else if err == nil && h.syncService != nil {
-		// El precio objetivo está por debajo del precio actual: enviar correo de confirmación/monitoreo al correo de Google
-		h.syncService.SendWishlistConfirmationEmailAsync(userEmail, userName, gameTitle, gameSlug, storeName, bestPrice, req.TargetPrice)
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -177,6 +190,8 @@ func (h *WishlistHandler) AddToWishlist(w http.ResponseWriter, r *http.Request) 
 		"id":           wishlistID,
 		"game_id":      req.GameID,
 		"target_price": req.TargetPrice,
+		"email_sent":   emailSent,
+		"email_error":  emailError,
 		"message":      "Juego guardado en tu lista de deseos",
 	})
 }

@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { GoogleLoginButton } from '../components/GoogleLoginButton';
-import { Flame, AlertCircle } from 'lucide-react';
+import { Flame, AlertCircle, ArrowLeft } from 'lucide-react';
 
 export const AuthPage: React.FC = () => {
   const navigate = useNavigate();
@@ -21,7 +21,15 @@ export const AuthPage: React.FC = () => {
 
   return (
     <div className="min-h-[80vh] flex items-center justify-center px-4 py-12">
-      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl space-y-6">
+      <div className="w-full max-w-md space-y-4">
+        <Link
+          to="/"
+          className="inline-flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Volver al catálogo
+        </Link>
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl space-y-6">
         {/* Brand Header */}
         <div className="text-center space-y-2">
           <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-brand-600 via-indigo-500 to-violet-400 flex items-center justify-center mx-auto shadow-md shadow-brand-500/20">
@@ -52,6 +60,7 @@ export const AuthPage: React.FC = () => {
             onSuccess={handleGoogleSuccess}
             onError={(msg) => setError(msg)}
           />
+        </div>
         </div>
       </div>
     </div>

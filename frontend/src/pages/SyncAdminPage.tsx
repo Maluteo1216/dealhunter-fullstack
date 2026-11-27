@@ -296,6 +296,15 @@ export const SyncAdminPage: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+      {/* Flecha de regreso */}
+      <Link
+        to="/"
+        className="inline-flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition"
+      >
+        <ArrowLeft className="w-4 h-4" />
+        Volver al catálogo
+      </Link>
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
